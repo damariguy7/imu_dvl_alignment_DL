@@ -942,7 +942,7 @@ def main(config):
 
             optimizer = optim.Adam(model.parameters(), lr=0.0000001, weight_decay=0.01)
 
-
+#
             # Learning rate scheduler
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
