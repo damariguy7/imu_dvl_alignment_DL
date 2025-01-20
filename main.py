@@ -951,7 +951,7 @@ def main(config):
                 patience=4,
                 verbose=True
             )
-
+##
             # Train the model with the improved training function
             train_model(
                 model=model,
