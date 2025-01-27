@@ -13,7 +13,10 @@ from scipy.linalg import logm, expm
 import torch
 from torch import nn
 
+import torch.nn.functional as F  # Add this import
+
 from scripts.models.resnet1d import resnet18_1d
+
 
 class Resnet1chDnet(nn.Module):
     def __init__(self, in_channels=6, output_features=1):
@@ -129,21 +132,21 @@ class SimplerIMUResNet(nn.Module):
 
         # ResNet blocks with increasing channels
         self.res1_1 = ResBlock1D(64, 128)
-        #self.res1_2 = ResBlock1D(64, 64)
+        # self.res1_2 = ResBlock1D(64, 64)
 
         self.res2_1 = ResBlock1D(128, 256)
-        #self.res2_2 = ResBlock1D(128, 128)
+        # self.res2_2 = ResBlock1D(128, 128)
 
         self.res3_1 = ResBlock1D(256, 512)
-        #self.res3_2 = ResBlock1D(256, 256)
+        # self.res3_2 = ResBlock1D(256, 256)
 
         self.res4_1 = ResBlock1D(512, 1024)
-        #self.res4_2 = ResBlock1D(512, 512)
+        # self.res4_2 = ResBlock1D(512, 512)
 
         # Global pooling and final layers
         self.avgpool = nn.AdaptiveAvgPool1d(1)
         self.dropout = nn.Dropout(dropout_rate)
-        self.fc = nn.Linear(1024, 4)
+        self.fc = nn.Linear(1024, 3)
 
     def forward(self, x):
         # Input shape: (batch, time, features)
@@ -158,30 +161,31 @@ class SimplerIMUResNet(nn.Module):
         # ResNet blocks
         # Stage 1
         x = self.res1_1(x)
-        #x = self.res1_2(x)
+        # x = self.res1_2(x)
 
         # Stage 2
         x = self.res2_1(x)
-        #x = self.res2_2(x)
+        # x = self.res2_2(x)
 
         # Stage 3
         x = self.res3_1(x)
-        #x = self.res3_2(x)
+        # x = self.res3_2(x)
 
         # Stage 4
         x = self.res4_1(x)
-        #x = self.res4_2(x)
+        # x = self.res4_2(x)
 
         # Global pooling and prediction
         x = self.avgpool(x)
         x = torch.flatten(x, start_dim=1)
-        #x = self.dropout(x)
+        # x = self.dropout(x)
         x = self.fc(x)
 
         return x
 
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs, device, scheduler=None):  # Removed l2_lambda parameter
+def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs, device,
+                scheduler=None):  # Removed l2_lambda parameter
     model.to(device)
     best_val_loss = float('inf')
     patience = 1
@@ -199,7 +203,6 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
             outputs = model(inputs)
 
             loss = criterion(outputs, labels)
-            # Removed L2 regularization calculation and addition
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
@@ -237,6 +240,72 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
                 print(f"Early stopping triggered after epoch {epoch + 1}")
                 model.load_state_dict(best_model_state)  # Restore best model
                 break
+
+
+class EulerAnglesLoss(nn.Module):
+    def __init__(self):
+        """
+        Custom loss function for Euler angles that handles periodicity and constrains angles to (-π, π]
+        """
+        super(EulerAnglesLoss, self).__init__()
+
+    def normalize_angle(self, angle):
+        """
+        Normalize angle to (-π, π] range
+        Args:
+            angle (torch.Tensor): Input angle in radians
+        Returns:
+            torch.Tensor: Normalized angle in (-π, π] range
+        """
+        # Use torch.remainder to handle periodicity
+        normalized = torch.remainder(angle + math.pi, 2 * math.pi) - math.pi
+        return normalized
+
+    def forward(self, pred, target):
+        """
+        Calculate the loss between predicted and target Euler angles
+        Args:
+            pred (torch.Tensor): Predicted Euler angles [batch_size, 3] for (roll, pitch, yaw)
+            target (torch.Tensor): Target Euler angles [batch_size, 3] for (roll, pitch, yaw)
+        Returns:
+            torch.Tensor: Scalar loss value
+        """
+        # Normalize both predicted and target angles to (-π, π] range
+        pred_normalized = torch.stack([self.normalize_angle(a) for a in pred.t()]).t()
+        target_normalized = torch.stack([self.normalize_angle(a) for a in target.t()]).t()
+
+        # Calculate the angular difference considering periodicity
+        diff = pred_normalized - target_normalized
+        diff_normalized = torch.stack([self.normalize_angle(d) for d in diff.t()]).t()
+
+        # Calculate L2 (Euclidean) norm of the differences
+        # This computes: sqrt(dx^2 + dy^2 + dz^2) where dx,dy,dz are the angle differences
+        loss = torch.norm(diff_normalized, p=2, dim=1)
+
+        # Take mean across batch
+        loss = torch.mean(loss)
+
+        return loss
+
+
+
+
+class QuaternionNormLoss(nn.Module):
+    def __init__(self, norm_weight=0.1):
+        super(QuaternionNormLoss, self).__init__()
+        self.norm_weight = norm_weight
+
+    def forward(self, pred, target):
+        # Orientation loss
+        inner_product = torch.sum(pred * target, dim=-1)
+        orientation_loss = 1 - torch.abs(inner_product)
+
+        # Unit norm constraint
+        norm_loss = torch.abs(torch.sum(pred * pred, dim=-1) - 1.0)
+
+        return torch.mean(orientation_loss + self.norm_weight * norm_loss)
+
+
 class AngularMSELoss(nn.Module):
     def __init__(self, period=360.0):
         """
@@ -267,7 +336,6 @@ class AngularMSELoss(nn.Module):
 
         # Calculate MSE on the wrapped differences
         return torch.mean(wrapped_diff ** 2)
-
 
 
 def quaternion_to_euler(q):
@@ -345,6 +413,7 @@ def single_quaternion_to_euler(q):
 
     return roll_deg, pitch_deg, yaw_deg
 
+
 def evaluate_model(model, test_loader, criterion, device):
     model.eval()
     total_loss = 0.0
@@ -357,21 +426,19 @@ def evaluate_model(model, test_loader, criterion, device):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
             # Convert quaternions to Euler angles
-            outputs_euler = quaternion_to_euler(outputs)
-            targets_euler = quaternion_to_euler(targets)
+            # outputs_euler = quaternion_to_euler(outputs)
+            # targets_euler = quaternion_to_euler(targets)
 
             for ii in range(len(inputs)):
-                squared_err = squared_angular_difference(targets_euler[ii], outputs_euler[ii])
+                squared_err = squared_angular_difference(targets[ii], outputs[ii])
                 rmse = calculate_rmse(squared_err)
                 rmse_list.append(rmse)
-
-
 
             # loss = criterion(outputs, targets)
             # total_loss += loss.item()
 
-            all_predictions.append(outputs_euler.cpu().numpy())
-            all_targets.append(targets_euler.cpu().numpy())
+            all_predictions.append(outputs.cpu().numpy())
+            all_targets.append(targets.cpu().numpy())
 
             # squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees),
             #                                                         euler_body_dvl_gt)
@@ -392,7 +459,6 @@ def evaluate_model(model, test_loader, criterion, device):
     return mean_rmse, avg_loss, rmse_components, total_rmse
 
 
-
 class IMUDVLWindowedDataset(Dataset):
     def __init__(self, series, window_size):
         self.imu_series = torch.FloatTensor(series[0])
@@ -404,8 +470,8 @@ class IMUDVLWindowedDataset(Dataset):
         return len(self.imu_series) - self.window_size
 
     def __getitem__(self, idx):
-        #window = self.imu_series[idx:idx + self.window_size + 1]
-        #return window[:-1], window[-1]
+        # window = self.imu_series[idx:idx + self.window_size + 1]
+        # return window[:-1], window[-1]
 
         imu_window = self.imu_series[idx:idx + self.window_size]
         dvl_window = self.dvl_series[idx:idx + self.window_size]
@@ -416,7 +482,6 @@ class IMUDVLWindowedDataset(Dataset):
 
         # Return features (IMU and DVL data for the window) and labels (last IMU and DVL data points)
         return input_data, euler_body_dvl_window[0]
-
 
 
 def windowed_dataset(series_list, window_size, batch_size, shuffle):
@@ -448,7 +513,6 @@ def windowed_dataset(series_list, window_size, batch_size, shuffle):
     return dataloader
 
 
-
 def temporal_split(dataset, train_ratio=0.8):
     split_idx = int(len(dataset) * train_ratio)
     return dataset[:split_idx], dataset[split_idx:]
@@ -466,7 +530,6 @@ def save_model(model, window_size, base_path="models"):
     import os
     # # Create models directory if it doesn't exist
     # os.makedirs(base_path, exist_ok=True)
-
 
     # Create filename with window size
     filepath = os.path.join(base_path, f'imu_dvl_model_window_{window_size}.pth')
@@ -502,7 +565,7 @@ def skew_symetric(vectors):
     result = np.zeros((3, 3, N))
 
     for i in range(N):
-        result[:,:,i] = vector_to_skew(vectors[:, i])
+        result[:, :, i] = vector_to_skew(vectors[:, i])
 
     return result
 
@@ -649,9 +712,7 @@ def run_acc_gradient_descent(v_imu, v_dvl, omega_skew_imu, a_imu, max_iterations
 
 
 def squared_angular_difference(a, b):
-
     squared_diff = np.zeros(3)
-
 
     for i in range(3):
         # Calculate both possible angular differences
@@ -659,14 +720,14 @@ def squared_angular_difference(a, b):
         diff2 = (b[i] - a[i]) % 360
 
         # Take the minimum of the two differences
-        squared_diff[i] = (min(diff1, diff2))**2
+        squared_diff[i] = (min(diff1, diff2)) ** 2
 
     sum_diff = np.mean(squared_diff)
     return sum_diff
 
 
 def squared_angle_difference(a, b):
-    return (min((a - b) % 360, (b - a) % 360))**2
+    return (min((a - b) % 360, (b - a) % 360)) ** 2
 
 
 def euler_angles_to_rotation_matrix(roll_rads, pitch_rads, yaw_rads):
@@ -727,14 +788,11 @@ def calculate_rmse(squared_error):
     return np.sqrt(squared_error)
 
 
-
-
 def convert_deg_to_rads(roll_deg, pitch_deg, yaw_deg):
     roll_rads = np.radians(roll_deg)
     pitch_rads = np.radians(pitch_deg)
     yaw_rads = np.radians(yaw_deg)
     return roll_rads, pitch_rads, yaw_rads
-
 
 
 def run_svd_solution_for_wahba_problem(velocity_ins_sampled, velocity_dvl_sampled):
@@ -798,6 +856,7 @@ def calculate_min_rmse(rmse_values):
     min_index = rmse_values.index(min_rmse)
     return min_rmse, min_index
 
+
 def main(config):
     # Example usage
 
@@ -805,12 +864,16 @@ def main(config):
     roll_gt_deg = config['roll_gt_deg']
     pitch_gt_deg = config['pitch_gt_deg']
     yaw_gt_deg = config['yaw_gt_deg']
-    simulation_freq = 5
-    single_dataset_len = 1612
-    single_dataset_duration_sec = single_dataset_len/simulation_freq #should be same parameter value like in matlab simulation
 
-    #single_dataset_duration_sec = 230 #should be same parameter value like in matlab simulation
-    #single_dataset_len = single_dataset_duration_sec * simulation_freq
+    simulation_freq = 5
+    single_dataset_duration_sec = 230  # should be same parameter value like in matlab simulation
+    single_dataset_len = single_dataset_duration_sec * simulation_freq
+
+    # single_dataset_len = 1612
+    # single_dataset_duration_sec = single_dataset_len/simulation_freq #should be same parameter value like in matlab simulation
+
+    # single_dataset_duration_sec = 230 #should be same parameter value like in matlab simulation
+    # single_dataset_len = single_dataset_duration_sec * simulation_freq
     data_path = config['data_path']
     simulated_data_file_name = config['simulated_data_file_name']
     real_data_file_name = config['real_data_file_name']
@@ -819,7 +882,6 @@ def main(config):
     batch_size = 32
     validation_precentage = 20
     num_of_check_baseline_iterations = 1
-
 
     # Set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -843,7 +905,6 @@ def main(config):
     # euler_body_dvl_real_data_full = euler_body_dvl_real_data_full[:, 150:300]
     real_dataset_len = len(v_imu_body_real_data_full[1])
 
-
     ##prepare real data for check
     # real_data_trajectory_index = config['real_data_trajectory_index']
     # real_imu_file_name = config['real_imu_file_name']
@@ -853,7 +914,6 @@ def main(config):
     # real_data_dvl_pd = pd.read_csv(os.path.join(data_path, f'{real_dvl_file_name}',f'{real_data_trajectory_index}'), header=None)
     # real_data_gt_pd = pd.read_csv(os.path.join(data_path, f'{real_gt_file_name}',f'{real_data_trajectory_index}'), header=None)
 
-
     ### Prepare the full dataset
     time = np.array(simulated_data_pd.iloc[:, 0].T)
     num_of_simulated_datasets = len(time) // single_dataset_len
@@ -861,20 +921,19 @@ def main(config):
     v_dvl_full = np.array(simulated_data_pd.iloc[:, 4:7].T)
     v_dvl_body_full = np.dot(rotation_matrix_ins_to_dvl.T, v_dvl_full)
     v_gt_body_full = np.array(simulated_data_pd.iloc[:, 7:10].T)
-    euler_body_dvl_full = np.array(simulated_data_pd.iloc[:, 16:20].T)
-    a_imu_body_full = np.array(simulated_data_pd.iloc[:, 20:23].T)
-    omega_imu_body_full = np.array(simulated_data_pd.iloc[:, 23:26].T)
+    euler_body_dvl_full = np.array(simulated_data_pd.iloc[:, 16:19].T)
+    a_imu_body_full = np.array(simulated_data_pd.iloc[:, 19:22].T)
+    omega_imu_body_full = np.array(simulated_data_pd.iloc[:, 22:25].T)
     omega_skew_imu_body_full = skew_symetric(omega_imu_body_full)
-    # euler_body_dvl_full = np.array(simulated_data_pd.iloc[:, 16:19].T)
-    # a_imu_body_full = np.array(simulated_data_pd.iloc[:, 19:22].T)
-    # omega_imu_body_full = np.array(simulated_data_pd.iloc[:, 22:25].T)
+
+    # for quaternion presentation
+    # euler_body_dvl_full = np.array(simulated_data_pd.iloc[:, 16:20].T)
+    # a_imu_body_full = np.array(simulated_data_pd.iloc[:, 20:23].T)
+    # omega_imu_body_full = np.array(simulated_data_pd.iloc[:, 23:26].T)
     # omega_skew_imu_body_full = skew_symetric(omega_imu_body_full)
-
-
 
     # split data into training and validation sets
     index_of_split_series = int(num_of_simulated_datasets * (validation_precentage / 100))
-
 
     current_time_test_list = []
     rmse_test_list = []
@@ -905,15 +964,15 @@ def main(config):
              v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
              euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
 
-    v_imu_dvl_test_real_data_list.append([v_imu_body_real_data_full.T,v_dvl_real_data_full.T,euler_body_dvl_real_data_full.T])
+    v_imu_dvl_test_real_data_list.append(
+        [v_imu_body_real_data_full.T, v_dvl_real_data_full.T, euler_body_dvl_real_data_full.T])
 
-
-################################## train model with simulated data ##################################################
-    if(config['train_model']):
+    ################################## train model with simulated data ##################################################
+    if (config['train_model']):
         for i in window_sizes:
             print('train with window of %d seconds', i)
             # Parameters
-            window_size = i*simulation_freq
+            window_size = i * simulation_freq
 
             train_loader = windowed_dataset(
                 series_list=v_imu_dvl_train_series_list,
@@ -929,20 +988,19 @@ def main(config):
                 shuffle=False
             )
 
-
             ## start of CNN ########################################################################
             # Set up the model, loss function, and optimizer
             # Create model with dropout
             model = SimplerIMUResNet(dropout_rate=0.3)
 
             # Loss function
-            criterion = nn.MSELoss()
+            criterion = EulerAnglesLoss()
 
             # Optimizer with weight decay (L2 regularization)
 
-            optimizer = optim.Adam(model.parameters(), lr=0.0000001, weight_decay=0.01)
+            optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=0.01)
 
-#
+            #
             # Learning rate scheduler
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer,
@@ -951,7 +1009,7 @@ def main(config):
                 patience=4,
                 verbose=True
             )
-##
+
             # Train the model with the improved training function
             train_model(
                 model=model,
@@ -959,7 +1017,7 @@ def main(config):
                 val_loader=val_loader,
                 criterion=criterion,
                 optimizer=optimizer,
-                num_epochs=50,
+                num_epochs=25,
                 device=device,
                 scheduler=scheduler
                 # l2_lambda=0.01
@@ -968,24 +1026,21 @@ def main(config):
             # Save the model and store its path
             model_path = save_model(model, i, trained_model_base_path)
 
-
-
     # Test model
-    if(config['test_model']):
+    if (config['test_model']):
         for window_size in window_sizes:
             print(f'\nEvaluating model with window size {window_size}')
-    
+
             # Construct the specific model path for this window size
             model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_window_{window_size}.pth')
-    
+
             # Load model
             model = SimplerIMUResNet(dropout_rate=0.3)
             model.load_state_dict(torch.load(model_path, map_location=device))
             model.to(device)
             model.eval()
-    
-    
-            if(config['test_type'] == 'simulated_data'):
+
+            if (config['test_type'] == 'simulated_data'):
                 # Create test loader for this window size
                 test_loader = windowed_dataset(
                     series_list=v_imu_dvl_test_series_list,
@@ -994,7 +1049,7 @@ def main(config):
                     shuffle=False
                 )
 
-            elif(config['test_type'] == 'real_data'):
+            elif (config['test_type'] == 'real_data'):
                 # Create test loader for this window size
                 test_loader = windowed_dataset(
                     series_list=v_imu_dvl_test_real_data_list,
@@ -1003,9 +1058,7 @@ def main(config):
                     shuffle=False
                 )
 
-
-
-            #Loss function
+            # Loss function
             criterion = nn.MSELoss()
 
             # Evaluate model
@@ -1025,9 +1078,6 @@ def main(config):
                 f"Test RMSE (Roll, Pitch, Yaw): {test_rmse_components[0]:.4f}, {test_rmse_components[1]:.4f}, {test_rmse_components[2]:.4f}")
             print(f"Test Total RMSE: {test_total_rmse:.4f}")
 
-
-
-    
         #### Plot test results
         # Create a new figure with 3 subplots (one for each axis)
         fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15), sharex=True)
@@ -1055,9 +1105,8 @@ def main(config):
         ax4.legend()
         ax4.grid(True)
         plt.tight_layout()
-        plt.show(block = False)
+        plt.show(block=False)
 
-    
     ### Base Line Model
     # Lists to store results
     num_samples_baseline_list = []
@@ -1086,12 +1135,12 @@ def main(config):
 
         if (config['test_type'] == "real_data"):
 
-
             for num_samples in tqdm(range(2, real_dataset_len, 20)):  # Start from 2, increment by 5
 
-                current_time = (num_samples / real_dataset_len) * real_dataset_len #because it 1hz - one sample per second
+                current_time = (
+                                           num_samples / real_dataset_len) * real_dataset_len  # because it 1hz - one sample per second
 
-                #prepare the data
+                # prepare the data
                 v_imu_sampled = v_imu_body_real_data_full[:, 0:num_samples]
                 v_dvl_sampled = v_dvl_real_data_full[:, 0:num_samples]
                 euler_body_dvl_gt = euler_body_dvl_real_data_full[:, 0]
@@ -1108,7 +1157,6 @@ def main(config):
                 #                                                    a_imu_sampled)
                 # euler_angles_gd_degrees_list.append(euler_angles_gd_degrees)
 
-
                 squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees),
                                                                         euler_body_dvl_gt)
                 squared_error_svd_baseline_list.append(squared_error_svd_baseline)
@@ -1116,7 +1164,6 @@ def main(config):
                 # squared_error_gd_baseline = squared_angular_difference(np.array(euler_angles_gd_degrees),
                 #                                                        euler_body_dvl_gt)
                 # squared_error_gd_baseline_list.append(squared_error_gd_baseline)
-
 
                 squared_error_roll_baseline = squared_angle_difference(euler_angles_svd_degrees[0],
                                                                        euler_body_dvl_gt[0])
@@ -1138,13 +1185,13 @@ def main(config):
                 rmse_svd_pitch = calculate_rmse(squared_error_pitch_baseline)
                 rmse_svd_yaw = calculate_rmse(squared_error_yaw_baseline)
 
-                #rmse_gd = calculate_rmse(squared_error_gd_baseline)
+                # rmse_gd = calculate_rmse(squared_error_gd_baseline)
 
                 # Store results
                 num_samples_baseline_list.append(num_samples)
                 current_time_baseline_list.append(current_time)
                 rmse_svd_baseline_list.append(rmse_svd)
-                #rmse_baseline_centered_list.append(rmse_centered)
+                # rmse_baseline_centered_list.append(rmse_centered)
                 rmse_roll_baseline_list.append(rmse_svd_roll)
                 rmse_pitch_baseline_list.append(rmse_svd_pitch)
                 rmse_yaw_baseline_list.append(rmse_svd_yaw)
@@ -1157,9 +1204,8 @@ def main(config):
 
         elif (config['test_type'] == "simulated_data"):
 
-
             # Calculate number of sample points
-            num_sample_points = (single_dataset_len - 10) // 10   # = 117 for single_dataset_len = 1170
+            num_sample_points = (single_dataset_len - 10) // 10  # = 117 for single_dataset_len = 1170
             num_samples_range = range(10, single_dataset_len, 10)  # This will give us consistent lengths
 
             # Initialize arrays to store all RMSE values across runs
@@ -1171,10 +1217,9 @@ def main(config):
 
             print(f"num_of_samples:{num_of_simulated_datasets}")
 
-
             for check_iter in range(num_of_check_baseline_iterations):
 
-                print(f"curr_check_idx: {num_of_simulated_datasets-num_of_check_baseline_iterations+check_iter}")
+                print(f"curr_check_idx: {num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter}")
 
                 # Lists to store results
                 # num_samples_baseline_list = []
@@ -1200,22 +1245,21 @@ def main(config):
 
                 current_time_baseline_list.clear()
 
-                for num_samples in tqdm(range(10, single_dataset_len, 20)):  # should Start from 2, increment by 5
+                for num_samples in tqdm(range(2, single_dataset_len, 20)):  # should Start from 2, increment by 5
 
                     current_time = (num_samples / single_dataset_len) * single_dataset_duration_sec
 
                     # Sample the data
-                    start_idx = (num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter) * single_dataset_len
+                    start_idx = (
+                                            num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter) * single_dataset_len
                     v_imu_sampled = v_imu_body_full[:, start_idx:start_idx + num_samples]
                     v_dvl_sampled = v_dvl_full[:, start_idx:start_idx + num_samples]
                     a_imu_sampled = a_imu_body_full[:, start_idx:start_idx + num_samples]
                     omega_skew_imu_sampled = omega_skew_imu_body_full[:, :, start_idx:start_idx + num_samples]
 
-                    euler_body_dvl_gt = single_quaternion_to_euler(euler_body_dvl_full[:, start_idx])
-
+                    euler_body_dvl_gt = euler_body_dvl_full[:, start_idx]
 
                     # Acceleration-based Method: Run Gradient Descent solution
-
 
                     # Velocity-based Method: Run SVD solution
                     euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled, v_dvl_sampled)
@@ -1233,24 +1277,32 @@ def main(config):
                     euler_angles_centered_degrees = np.degrees(euler_angles_centered_rads)
                     euler_angles_centered_degrees_list.append(euler_angles_centered_degrees)
 
-                    squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees), euler_body_dvl_gt)
+                    squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees),
+                                                                            euler_body_dvl_gt)
                     squared_error_svd_baseline_list.append(squared_error_svd_baseline)
 
                     # squared_error_gd_baseline = squared_angular_difference(np.array(euler_angles_gd_degrees),euler_body_dvl_gt)
                     # squared_error_gd_baseline_list.append(squared_error_gd_baseline)
 
-                    squared_centered_error_baseline = squared_angular_difference(np.array(euler_angles_centered_degrees), euler_body_dvl_gt)
-                    squared_centered_error_baseline_list.append(squared_angular_difference(np.array(euler_angles_centered_degrees), euler_body_dvl_gt))
+                    squared_centered_error_baseline = squared_angular_difference(
+                        np.array(euler_angles_centered_degrees), euler_body_dvl_gt)
+                    squared_centered_error_baseline_list.append(
+                        squared_angular_difference(np.array(euler_angles_centered_degrees), euler_body_dvl_gt))
 
-                    squared_error_roll_baseline = squared_angle_difference(euler_angles_svd_degrees[0], euler_body_dvl_gt[0])
-                    squared_error_roll_baseline_list.append(squared_angle_difference(euler_angles_svd_degrees[0], euler_body_dvl_gt[0]))
+                    squared_error_roll_baseline = squared_angle_difference(euler_angles_svd_degrees[0],
+                                                                           euler_body_dvl_gt[0])
+                    squared_error_roll_baseline_list.append(
+                        squared_angle_difference(euler_angles_svd_degrees[0], euler_body_dvl_gt[0]))
 
-                    squared_error_pitch_baseline = squared_angle_difference(euler_angles_svd_degrees[1], euler_body_dvl_gt[1])
-                    squared_error_pitch_baseline_list.append(squared_angle_difference(euler_angles_svd_degrees[1], euler_body_dvl_gt[1]))
+                    squared_error_pitch_baseline = squared_angle_difference(euler_angles_svd_degrees[1],
+                                                                            euler_body_dvl_gt[1])
+                    squared_error_pitch_baseline_list.append(
+                        squared_angle_difference(euler_angles_svd_degrees[1], euler_body_dvl_gt[1]))
 
-                    squared_error_yaw_baseline = squared_angle_difference(euler_angles_svd_degrees[2], euler_body_dvl_gt[2])
-                    squared_error_yaw_baseline_list.append(squared_angle_difference(euler_angles_svd_degrees[2], euler_body_dvl_gt[2]))
-
+                    squared_error_yaw_baseline = squared_angle_difference(euler_angles_svd_degrees[2],
+                                                                          euler_body_dvl_gt[2])
+                    squared_error_yaw_baseline_list.append(
+                        squared_angle_difference(euler_angles_svd_degrees[2], euler_body_dvl_gt[2]))
 
                     # Calculate RMSE
                     rmse_svd = calculate_rmse(squared_error_svd_baseline)
@@ -1259,9 +1311,7 @@ def main(config):
                     rmse_svd_pitch = calculate_rmse(squared_error_pitch_baseline)
                     rmse_svd_yaw = calculate_rmse(squared_error_yaw_baseline)
 
-
                     # rmse_gd = calculate_rmse(squared_error_gd_baseline)
-
 
                     # Store results
                     num_samples_baseline_list.append(num_samples)
@@ -1279,7 +1329,8 @@ def main(config):
 
                 plt.figure(figsize=(12, 8))
                 # Plot total RMSE for baseline and test
-                plt.plot(current_time_baseline_list, rmse_all_test_iterations_svd_baseline_list[check_iter], label='Baseline', linewidth=2)
+                plt.plot(current_time_baseline_list, rmse_all_test_iterations_svd_baseline_list[check_iter],
+                         label='Baseline', linewidth=2)
 
                 # Add labels and title
                 plt.xlabel('T [sec]', fontsize=16)
@@ -1294,8 +1345,6 @@ def main(config):
                 # Show plot
                 plt.show(block=False)
 
-
-
             # Create a list to store the means
             rmse_mean_svd_baseline_list = []
 
@@ -1307,9 +1356,7 @@ def main(config):
 
             rmse_svd_baseline_list = rmse_all_test_iterations_svd_baseline_list[-1]
 
-
-
-        ####RMSE
+            ####RMSE
 
             ######### Complete results graph
             # Create a single figure for total RMSE plot
@@ -1352,13 +1399,6 @@ def main(config):
             # Show plot
             plt.show(block=False)
 
-
-
-
-
-
-
-
         # # Create a new figure with 3 subplots (one for each axis)
         # fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15), sharex=True)
         #
@@ -1392,9 +1432,9 @@ def main(config):
         # ax4.grid(True)
         # plt.tight_layout()
         # plt.show(block = False)
-#
-#
-######### Complete results graph
+        #
+        #
+        ######### Complete results graph
         # Create a single figure for total RMSE plot
         plt.figure(figsize=(12, 8))
 
@@ -1403,7 +1443,8 @@ def main(config):
         test_color = 'red'
 
         # Plot total RMSE for baseline and test
-        plt.plot(current_time_baseline_list, rmse_svd_baseline_list, color=baseline_color, linestyle='-', label='Baseline',
+        plt.plot(current_time_baseline_list, rmse_svd_baseline_list, color=baseline_color, linestyle='-',
+                 label='Baseline',
                  linewidth=2)
         plt.scatter(current_time_test_list, rmse_test_list, color=test_color, marker='o', label='AligNet', s=100)
 
@@ -1418,7 +1459,6 @@ def main(config):
         # Add labels and title
         plt.xlabel('T [sec]', fontsize=20)
         plt.ylabel('Alignment RMSE [deg]', fontsize=20)
-
 
         # Add primary grid (solid lines for 50-second intervals)
         plt.grid(True, which='major', linestyle='-', alpha=0.5)
@@ -1466,66 +1506,53 @@ def main(config):
     #     plt.show(block = False)
     #     plt.savefig('3D_position_ecef')
 
+    # real_data_imu_pd
+    # real_data_dvl_pd
+    # real_data_gt_pd
+    # real_data_pd = pd.read_csv(os.path.join(data_path, f'{real_data_file_name}'), header=None)
+    # real_data_time = np.array(real_data_pd.iloc[:, 0].T)
+    # v_imu_body_real_data_full = np.array(real_data_pd.iloc[:, 4:7].T)
+    # v_dvl_real_data_full = np.array(real_data_pd.iloc[:, 13:16].T)
+    # euler_body_dvl_real_data_full = np.array(real_data_pd.iloc[:, 16:19].T)
+    # real_dataset_len = len(v_imu_body_real_data_full[1])
 
+    # lla_rad = np.array([simulated_data_pd['latitude'], simulated_data_pd['longitude'], simulated_data_pd['altitude']])
+    # lla_deg = np.array([np.rad2deg(simulated_data_pd['latitude']), np.rad2deg(simulated_data_pd['longitude']), simulated_data_pd['altitude']])
+    #
+    # # Create a 3D plot
+    # fig = plt.figure()
+    # ax = fig.add_subplot(111, projection='3d')
+    #
+    # # Plot the trajectory
+    # ax.plot(lla_deg[0], lla_deg[1], lla_deg[2], label='Trajectory')
+    #
+    # # Set labels and title
+    # ax.set_xlabel('X')
+    # ax.set_ylabel('Y')
+    # ax.set_zlabel('Z')
+    # ax.set_title('3D Position in lla deg')
+    #
+    # # Add a legend
+    # ax.legend()
+    #
+    # # Display the plot
+    # plt.show(block = False)
+    # plt.savefig('3D_position_lla_deg')
 
-
-
-
-
-        # real_data_imu_pd
-        # real_data_dvl_pd
-        # real_data_gt_pd
-        # real_data_pd = pd.read_csv(os.path.join(data_path, f'{real_data_file_name}'), header=None)
-        # real_data_time = np.array(real_data_pd.iloc[:, 0].T)
-        # v_imu_body_real_data_full = np.array(real_data_pd.iloc[:, 4:7].T)
-        # v_dvl_real_data_full = np.array(real_data_pd.iloc[:, 13:16].T)
-        # euler_body_dvl_real_data_full = np.array(real_data_pd.iloc[:, 16:19].T)
-        # real_dataset_len = len(v_imu_body_real_data_full[1])
-
-
-
-
-        # lla_rad = np.array([simulated_data_pd['latitude'], simulated_data_pd['longitude'], simulated_data_pd['altitude']])
-        # lla_deg = np.array([np.rad2deg(simulated_data_pd['latitude']), np.rad2deg(simulated_data_pd['longitude']), simulated_data_pd['altitude']])
-        #
-        # # Create a 3D plot
-        # fig = plt.figure()
-        # ax = fig.add_subplot(111, projection='3d')
-        #
-        # # Plot the trajectory
-        # ax.plot(lla_deg[0], lla_deg[1], lla_deg[2], label='Trajectory')
-        #
-        # # Set labels and title
-        # ax.set_xlabel('X')
-        # ax.set_ylabel('Y')
-        # ax.set_zlabel('Z')
-        # ax.set_title('3D Position in lla deg')
-        #
-        # # Add a legend
-        # ax.legend()
-        #
-        # # Display the plot
-        # plt.show(block = False)
-        # plt.savefig('3D_position_lla_deg')
-
-
-
-
-
-        # fig , axes = plt.subplots(ncols = 1 , nrows = 3 , figsize = (15,8))
-        # fig.suptitle('LLA deg seperatly')
-        # axes[0].plot(lla_deg[0], label = 'Latitude')
-        # axes[0].grid()
-        # axes[1].plot(lla_deg[1], label='longitude')
-        # axes[1].grid()
-        # axes[2].plot(lla_deg[2], label='altitude')
-        # axes[2].grid()
-        # plt.show(block = False)
-        #
-        #
-        # # # Convert LLA to ECEF coordinates
-        # ecef_data = navpy.lla2ecef(lla_deg[0], lla_deg[1], lla_deg[2],latlon_unit='rad',alt_unit='m')
-        #
+    # fig , axes = plt.subplots(ncols = 1 , nrows = 3 , figsize = (15,8))
+    # fig.suptitle('LLA deg seperatly')
+    # axes[0].plot(lla_deg[0], label = 'Latitude')
+    # axes[0].grid()
+    # axes[1].plot(lla_deg[1], label='longitude')
+    # axes[1].grid()
+    # axes[2].plot(lla_deg[2], label='altitude')
+    # axes[2].grid()
+    # plt.show(block = False)
+    #
+    #
+    # # # Convert LLA to ECEF coordinates
+    # ecef_data = navpy.lla2ecef(lla_deg[0], lla_deg[1], lla_deg[2],latlon_unit='rad',alt_unit='m')
+    #
 
 
 '''
@@ -1560,69 +1587,63 @@ def main(config):
 
 '''
 
-        #curr_v_gt_ned_x = v_gt_body_full[0,:].T
+# curr_v_gt_ned_x = v_gt_body_full[0,:].T
 
-        # dt = np.diff(time).mean()# or whatever your time step is
-        # x_n = cumulative_trapezoid(v_gt_body_full[0,:], dx=dt, initial=0)
-        # y_n = cumulative_trapezoid(v_gt_body_full[1,:], dx=dt, initial=0)
-        # z_n = cumulative_trapezoid(v_gt_body_full[2,:], dx=dt, initial=0)
-
-
-        # x_n = pos_ned[0,:]
-        # y_n = pos_ned[1,:]
-        # z_n = pos_ned[2,:]
+# dt = np.diff(time).mean()# or whatever your time step is
+# x_n = cumulative_trapezoid(v_gt_body_full[0,:], dx=dt, initial=0)
+# y_n = cumulative_trapezoid(v_gt_body_full[1,:], dx=dt, initial=0)
+# z_n = cumulative_trapezoid(v_gt_body_full[2,:], dx=dt, initial=0)
 
 
-
-        # fig = plt.figure(figsize=(8, 6))
-        # ax = fig.add_subplot(111, projection='3d')
-        # ax.plot(x_n, y_n, z_n, 'b-', label='AUV trajectory')
-        # ax.set_xlabel('X position (m)')
-        # ax.set_ylabel('Y position (m)')
-        # ax.set_zlabel('Z position (m)')
-        # ax.set_title('AUV Trajectory NED in 3D')
-        # plt.legend()
-        # plt.grid(True)
-        # plt.show(block=False)
+# x_n = pos_ned[0,:]
+# y_n = pos_ned[1,:]
+# z_n = pos_ned[2,:]
 
 
+# fig = plt.figure(figsize=(8, 6))
+# ax = fig.add_subplot(111, projection='3d')
+# ax.plot(x_n, y_n, z_n, 'b-', label='AUV trajectory')
+# ax.set_xlabel('X position (m)')
+# ax.set_ylabel('Y position (m)')
+# ax.set_zlabel('Z position (m)')
+# ax.set_title('AUV Trajectory NED in 3D')
+# plt.legend()
+# plt.grid(True)
+# plt.show(block=False)
 
 
-        # Plot trajectory
+# Plot trajectory
 
 
-
-
-        # # Create a new figure with 3 subplots (one for each axis)
-        # fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 15), sharex=True)
-        #
-        # # Plot X-axis velocities
-        # ax1.plot(time, v_gt_body_full[0], label='V_gt_x')
-        # ax1.plot(time, v_dvl_body_full[0], label='V_dvl_x')
-        # ax1.set_ylabel('X Velocity [m/s]')
-        # ax1.legend()
-        # ax1.grid(True)
-        #
-        # # Plot Y-axis velocities
-        # ax2.plot(time, v_gt_body_full[1], label='V_gt_y')
-        # ax2.plot(time, v_dvl_body_full[1], label='V_dvl_y')
-        # ax2.set_ylabel('Y Velocity [m/s]')
-        # ax2.legend()
-        # ax2.grid(True)
-        #
-        # # Plot Z-axis velocities
-        # ax3.plot(time, v_gt_body_full[2], label='V_gt_z')
-        # ax3.plot(time, v_dvl_body_full[2], label='V_dvl_z')
-        # ax3.set_xlabel('Time (sec)')
-        # ax3.set_ylabel('Z Velocity [m/s]')
-        # ax3.legend()
-        # ax3.grid(True)
-        #
-        # plt.suptitle('GT velocity in body [m/s] and est dvl velocity in body [m/s] vs Time [sec]')
-        # plt.tight_layout()
-        # plt.show(block = False)
-        # plt.savefig('v_GT_and_v_dvl_body_vs_Time.png')
-
+# # Create a new figure with 3 subplots (one for each axis)
+# fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 15), sharex=True)
+#
+# # Plot X-axis velocities
+# ax1.plot(time, v_gt_body_full[0], label='V_gt_x')
+# ax1.plot(time, v_dvl_body_full[0], label='V_dvl_x')
+# ax1.set_ylabel('X Velocity [m/s]')
+# ax1.legend()
+# ax1.grid(True)
+#
+# # Plot Y-axis velocities
+# ax2.plot(time, v_gt_body_full[1], label='V_gt_y')
+# ax2.plot(time, v_dvl_body_full[1], label='V_dvl_y')
+# ax2.set_ylabel('Y Velocity [m/s]')
+# ax2.legend()
+# ax2.grid(True)
+#
+# # Plot Z-axis velocities
+# ax3.plot(time, v_gt_body_full[2], label='V_gt_z')
+# ax3.plot(time, v_dvl_body_full[2], label='V_dvl_z')
+# ax3.set_xlabel('Time (sec)')
+# ax3.set_ylabel('Z Velocity [m/s]')
+# ax3.legend()
+# ax3.grid(True)
+#
+# plt.suptitle('GT velocity in body [m/s] and est dvl velocity in body [m/s] vs Time [sec]')
+# plt.tight_layout()
+# plt.show(block = False)
+# plt.savefig('v_GT_and_v_dvl_body_vs_Time.png')
 
 
 # ##################### Use real data from AUV SNAPIR experiments ########################################################
@@ -1751,8 +1772,6 @@ def main(config):
 #         print(euler_angles_svd_degrees)
 
 
-
-
 if __name__ == '__main__':
     # Default configuration
     default_config = {
@@ -1767,7 +1786,7 @@ if __name__ == '__main__':
         'pitch_gt_deg': 0.2,
         'yaw_gt_deg': -44.3,
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
-        'test_type': 'simulated_data', # Set to "real_data" or "simulated_data"
+        'test_type': 'simulated_data',  # Set to "real_data" or "simulated_data"
         'train_model': True,  # Set to False to use the saved trained model
         'test_model': True,
         'test_baseline_model': True,
@@ -1794,3 +1813,5 @@ if __name__ == '__main__':
     main(config)
 
     plt.show()
+
+
