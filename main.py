@@ -12,25 +12,438 @@ from scipy.integrate import cumulative_trapezoid
 from scipy.linalg import logm, expm
 import torch
 from torch import nn
+from torch import Tensor
+from typing import Type, Any, Callable, Union, List, Optional
 
 import torch.nn.functional as F  # Add this import
 
-from scripts.models.resnet1d import resnet18_1d
+
+
+
+
+
+__all__ = [
+    "ResNet",
+    "resnet18_1d",
+    "resnet34_1d",
+    "resnet50_1d",
+    "resnet101_1d",
+    "resnet152_1d",
+    "resnext50_32x4d_1d",
+    "resnext101_32x8d_1d",
+    "wide_resnet50_2_1d",
+    "wide_resnet101_2_1d",
+]
+
+
+# model_urls = {
+#     "resnet18": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
+#     "resnet34": "https://download.pytorch.org/models/resnet34-b627a593.pth",
+#     "resnet50": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
+#     "resnet101": "https://download.pytorch.org/models/resnet101-63fe2227.pth",
+#     "resnet152": "https://download.pytorch.org/models/resnet152-394f9c45.pth",
+#     "resnext50_32x4d": "https://download.pytorch.org/models/resnext50_32x4d-7cdf4587.pth",
+#     "resnext101_32x8d": "https://download.pytorch.org/models/resnext101_32x8d-8ba56ff5.pth",
+#     "wide_resnet50_2": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
+#     "wide_resnet101_2": "https://download.pytorch.org/models/wide_resnet101_2-32ee1156.pth",
+# }
+
+
+def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv1d:
+    """3x3 convolution with padding"""
+    return nn.Conv1d(
+        in_planes,
+        out_planes,
+        kernel_size=3,
+        stride=stride,
+        padding=dilation,
+        groups=groups,
+        bias=False,
+        dilation=dilation,
+    )
+
+
+def conv1x1(in_planes: int, out_planes: int, stride: int = 1) -> nn.Conv1d:
+    """1x1 convolution"""
+    return nn.Conv1d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
+
+
+class BasicBlock(nn.Module):
+    expansion: int = 1
+
+    def __init__(
+        self,
+        inplanes: int,
+        planes: int,
+        stride: int = 1,
+        downsample: Optional[nn.Module] = None,
+        groups: int = 1,
+        base_width: int = 64,
+        dilation: int = 1,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
+        super().__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm1d
+        if groups != 1 or base_width != 64:
+            raise ValueError("BasicBlock only supports groups=1 and base_width=64")
+        if dilation > 1:
+            raise NotImplementedError("Dilation > 1 not supported in BasicBlock")
+        # Both self.conv1 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = conv3x3(inplanes, planes, stride)
+        self.bn1 = norm_layer(planes)
+        self.relu = nn.ReLU(inplace=True)
+        self.conv2 = conv3x3(planes, planes)
+        self.bn2 = norm_layer(planes)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x: Tensor) -> Tensor:
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+
+class Bottleneck(nn.Module):
+    # Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
+    # while original implementation places the stride at the first 1x1 convolution(self.conv1)
+    # according to "Deep residual learning for image recognition"https://arxiv.org/abs/1512.03385.
+    # This variant is also known as ResNet V1.5 and improves accuracy according to
+    # https://ngc.nvidia.com/catalog/model-scripts/nvidia:resnet_50_v1_5_for_pytorch.
+
+    expansion: int = 4
+
+    def __init__(
+        self,
+        inplanes: int,
+        planes: int,
+        stride: int = 1,
+        downsample: Optional[nn.Module] = None,
+        groups: int = 1,
+        base_width: int = 64,
+        dilation: int = 1,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
+        super().__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm1d
+        width = int(planes * (base_width / 64.0)) * groups
+        # Both self.conv2 and self.downsample layers downsample the input when stride != 1
+        self.conv1 = conv1x1(inplanes, width)
+        self.bn1 = norm_layer(width)
+        self.conv2 = conv3x3(width, width, stride, groups, dilation)
+        self.bn2 = norm_layer(width)
+        self.conv3 = conv1x1(width, planes * self.expansion)
+        self.bn3 = norm_layer(planes * self.expansion)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = downsample
+        self.stride = stride
+
+    def forward(self, x: Tensor) -> Tensor:
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)
+        out = self.relu(out)
+
+        out = self.conv2(out)
+        out = self.bn2(out)
+        out = self.relu(out)
+
+        out = self.conv3(out)
+        out = self.bn3(out)
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+
+
+class ResNet(nn.Module):
+    def __init__(
+        self,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        layers: List[int],
+        num_classes: int = 1000,
+        zero_init_residual: bool = False,
+        groups: int = 1,
+        width_per_group: int = 64,
+        replace_stride_with_dilation: Optional[List[bool]] = None,
+        norm_layer: Optional[Callable[..., nn.Module]] = None,
+    ) -> None:
+        super().__init__()
+        if norm_layer is None:
+            norm_layer = nn.BatchNorm1d
+        self._norm_layer = norm_layer
+
+        self.inplanes = 64
+        self.dilation = 1
+        if replace_stride_with_dilation is None:
+            # each element in the tuple indicates if we should replace
+            # the 2x2 stride with a dilated convolution instead
+            replace_stride_with_dilation = [False, False, False]
+        if len(replace_stride_with_dilation) != 3:
+            raise ValueError(
+                "replace_stride_with_dilation should be None "
+                f"or a 3-element tuple, got {replace_stride_with_dilation}"
+            )
+        self.groups = groups
+        self.base_width = width_per_group
+        self.conv1 = nn.Conv1d(6, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = norm_layer(self.inplanes)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
+        self.layer1 = self._make_layer(block, 64, layers[0])
+        self.layer2 = self._make_layer(block, 128, layers[1], stride=2, dilate=replace_stride_with_dilation[0])
+        self.layer3 = self._make_layer(block, 256, layers[2], stride=2, dilate=replace_stride_with_dilation[1])
+        self.layer4 = self._make_layer(block, 512, layers[3], stride=2, dilate=replace_stride_with_dilation[2])
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
+        self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv1d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(m, (nn.BatchNorm1d, nn.GroupNorm)):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+
+        # Zero-initialize the last BN in each residual branch,
+        # so that the residual branch starts with zeros, and each residual block behaves like an identity.
+        # This improves the model by 0.2~0.3% according to https://arxiv.org/abs/1706.02677
+        if zero_init_residual:
+            for m in self.modules():
+                if isinstance(m, Bottleneck):
+                    nn.init.constant_(m.bn3.weight, 0)  # type: ignore[arg-type]
+                elif isinstance(m, BasicBlock):
+                    nn.init.constant_(m.bn2.weight, 0)  # type: ignore[arg-type]
+
+    def _make_layer(
+        self,
+        block: Type[Union[BasicBlock, Bottleneck]],
+        planes: int,
+        blocks: int,
+        stride: int = 1,
+        dilate: bool = False,
+    ) -> nn.Sequential:
+        norm_layer = self._norm_layer
+        downsample = None
+        previous_dilation = self.dilation
+        if dilate:
+            self.dilation *= stride
+            stride = 1
+        if stride != 1 or self.inplanes != planes * block.expansion:
+            downsample = nn.Sequential(
+                conv1x1(self.inplanes, planes * block.expansion, stride),
+                norm_layer(planes * block.expansion),
+            )
+
+        layers = []
+        layers.append(
+            block(
+                self.inplanes, planes, stride, downsample, self.groups, self.base_width, previous_dilation, norm_layer
+            )
+        )
+        self.inplanes = planes * block.expansion
+        for _ in range(1, blocks):
+            layers.append(
+                block(
+                    self.inplanes,
+                    planes,
+                    groups=self.groups,
+                    base_width=self.base_width,
+                    dilation=self.dilation,
+                    norm_layer=norm_layer,
+                )
+            )
+
+        return nn.Sequential(*layers)
+
+    def _forward_impl(self, x: Tensor) -> Tensor:
+        # See note [TorchScript super()]
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+
+        x = self.avgpool(x)
+        x = torch.flatten(x, 1)
+        x = self.fc(x)
+
+        return x
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self._forward_impl(x)
+
+
+def _resnet(
+    arch: str,
+    block: Type[Union[BasicBlock, Bottleneck]],
+    layers: List[int],
+    pretrained: bool,
+    progress: bool,
+    **kwargs: Any,
+) -> ResNet:
+    model = ResNet(block, layers, **kwargs)
+    # if pretrained:
+    #     state_dict = load_state_dict_from_url(model_urls[arch], progress=progress)
+    #     model.load_state_dict(state_dict)
+    return model
+
+
+def resnet18_1d(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""ResNet-18 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet("resnet18", BasicBlock, [2, 2, 2, 2], pretrained, progress, **kwargs)
+
+
+def resnet34_1d(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""ResNet-34 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet("resnet34", BasicBlock, [3, 4, 6, 3], pretrained, progress, **kwargs)
+
+
+def resnet50_1d(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""ResNet-50 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet("resnet50", Bottleneck, [3, 4, 6, 3], pretrained, progress, **kwargs)
+
+
+def resnet101_1d(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""ResNet-101 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet("resnet101", Bottleneck, [3, 4, 23, 3], pretrained, progress, **kwargs)
+
+
+def resnet152_1d(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""ResNet-152 model from
+    `"Deep Residual Learning for Image Recognition" <https://arxiv.org/pdf/1512.03385.pdf>`_.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    return _resnet("resnet152", Bottleneck, [3, 8, 36, 3], pretrained, progress, **kwargs)
+
+
+def resnext50_32x4d_1d(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""ResNeXt-50 32x4d model from
+    `"Aggregated Residual Transformation for Deep Neural Networks" <https://arxiv.org/pdf/1611.05431.pdf>`_.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    kwargs["groups"] = 32
+    kwargs["width_per_group"] = 4
+    return _resnet("resnext50_32x4d", Bottleneck, [3, 4, 6, 3], pretrained, progress, **kwargs)
+
+
+def resnext101_32x8d_1d(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""ResNeXt-101 32x8d model from
+    `"Aggregated Residual Transformation for Deep Neural Networks" <https://arxiv.org/pdf/1611.05431.pdf>`_.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    kwargs["groups"] = 32
+    kwargs["width_per_group"] = 8
+    return _resnet("resnext101_32x8d", Bottleneck, [3, 4, 23, 3], pretrained, progress, **kwargs)
+
+
+def wide_resnet50_2_1d(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""Wide ResNet-50-2 model from
+    `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_.
+    The model is the same as ResNet except for the bottleneck number of channels
+    which is twice larger in every block. The number of channels in outer 1x1
+    convolutions is the same, e.g. last block in ResNet-50 has 2048-512-2048
+    channels, and in Wide ResNet-50-2 has 2048-1024-2048.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    kwargs["width_per_group"] = 64 * 2
+    return _resnet("wide_resnet50_2", Bottleneck, [3, 4, 6, 3], pretrained, progress, **kwargs)
+
+
+def wide_resnet101_2_1d(pretrained: bool = False, progress: bool = True, **kwargs: Any) -> ResNet:
+    r"""Wide ResNet-101-2 model from
+    `"Wide Residual Networks" <https://arxiv.org/pdf/1605.07146.pdf>`_.
+    The model is the same as ResNet except for the bottleneck number of channels
+    which is twice larger in every block. The number of channels in outer 1x1
+    convolutions is the same, e.g. last block in ResNet-50 has 2048-512-2048
+    channels, and in Wide ResNet-50-2 has 2048-1024-2048.
+    Args:
+        pretrained (bool): If True, returns a model pre-trained on ImageNet
+        progress (bool): If True, displays a progress bar of the download to stderr
+    """
+    kwargs["width_per_group"] = 64 * 2
+    return _resnet("wide_resnet101_2", Bottleneck, [3, 4, 23, 3], pretrained, progress, **kwargs)
+
+
+
+
 
 
 class Resnet1chDnet(nn.Module):
-    def __init__(self, in_channels=6, output_features=1):
+    def __init__(self, in_channels=6, output_features=3):
         self.in_channels = in_channels
         super(Resnet1chDnet, self).__init__()
 
         self.model = resnet18_1d()
 
-        self.model.conv1 = nn.Conv2d(self.in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        # Changed Conv2d to Conv1d since we're working with 1D data
+        self.model.conv1 = nn.Conv1d(self.in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
         self.model.fc = nn.Linear(512, output_features)
 
     def forward(self, x):
-        x = torch.unsqueeze(x, dim=1)
+        # Permute the dimensions from [batch_size, sequence_length, channels] to [batch_size, channels, sequence_length]
+        x = x.permute(0, 2, 1)
         return self.model(x)
+
+
+
+
+
+
+
+
+
+
 
 
 # Define the CNN model
@@ -184,13 +597,14 @@ class SimplerIMUResNet(nn.Module):
         return x
 
 
-def train_model(model, train_loader, val_loader, criterion, optimizer, num_epochs, device,
-                scheduler=None):  # Removed l2_lambda parameter
+def train_model(model, train_loader, val_loader, optimizer, num_epochs, device,
+                scheduler=None):
     model.to(device)
     best_val_loss = float('inf')
     patience = 1
     patience_counter = 0
     best_model_state = None
+    criterion = EulerAnglesLoss()  # Using the specialized loss for Euler angles
 
     for epoch in range(num_epochs):
         model.train()
@@ -202,9 +616,10 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
             optimizer.zero_grad()
             outputs = model(inputs)
 
+            # Calculate loss considering periodic nature of angles
             loss = criterion(outputs, labels)
-
             loss.backward()
+
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=2.0)
             optimizer.step()
             running_loss += loss.item()
@@ -241,36 +656,36 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, num_epoch
                 model.load_state_dict(best_model_state)  # Restore best model
                 break
 
+    return model, best_val_loss
+
 
 class EulerAnglesLoss(nn.Module):
     def __init__(self):
         """
-        Custom loss function for Euler angles that handles periodicity and constrains angles to (-π, π]
+        Custom loss function for Euler angles that handles periodicity and works with angles in degrees
         """
         super(EulerAnglesLoss, self).__init__()
 
     def normalize_angle(self, angle):
         """
-        Normalize angle to (-π, π] range
+        Normalize angle to [-180, 180] range
         Args:
-            angle (torch.Tensor): Input angle in radians
+            angle (torch.Tensor): Input angle in degrees
         Returns:
-            torch.Tensor: Normalized angle in (-π, π] range
+            torch.Tensor: Normalized angle in [-180, 180] range
         """
-        # Use torch.remainder to handle periodicity
-        normalized = torch.remainder(angle + math.pi, 2 * math.pi) - math.pi
-        return normalized
+        return ((angle + 180) % 360) - 180
 
     def forward(self, pred, target):
         """
         Calculate the loss between predicted and target Euler angles
         Args:
-            pred (torch.Tensor): Predicted Euler angles [batch_size, 3] for (roll, pitch, yaw)
-            target (torch.Tensor): Target Euler angles [batch_size, 3] for (roll, pitch, yaw)
+            pred (torch.Tensor): Predicted Euler angles [batch_size, 3] in degrees
+            target (torch.Tensor): Target Euler angles [batch_size, 3] in degrees
         Returns:
             torch.Tensor: Scalar loss value
         """
-        # Normalize both predicted and target angles to (-π, π] range
+        # Normalize both predicted and target angles to [-180, 180] range
         pred_normalized = torch.stack([self.normalize_angle(a) for a in pred.t()]).t()
         target_normalized = torch.stack([self.normalize_angle(a) for a in target.t()]).t()
 
@@ -278,15 +693,10 @@ class EulerAnglesLoss(nn.Module):
         diff = pred_normalized - target_normalized
         diff_normalized = torch.stack([self.normalize_angle(d) for d in diff.t()]).t()
 
-        # Calculate L2 (Euclidean) norm of the differences
-        # This computes: sqrt(dx^2 + dy^2 + dz^2) where dx,dy,dz are the angle differences
-        loss = torch.norm(diff_normalized, p=2, dim=1)
-
-        # Take mean across batch
-        loss = torch.mean(loss)
+        # Calculate MSE loss on the normalized differences
+        loss = torch.mean(diff_normalized ** 2)
 
         return loss
-
 
 
 
@@ -414,12 +824,13 @@ def single_quaternion_to_euler(q):
     return roll_deg, pitch_deg, yaw_deg
 
 
-def evaluate_model(model, test_loader, criterion, device):
+def evaluate_model(model, test_loader, device):
     model.eval()
     total_loss = 0.0
     all_predictions = []
     all_targets = []
     rmse_list = []
+    angle_err_list = []
 
     with torch.no_grad():
         for inputs, targets in test_loader:
@@ -429,13 +840,22 @@ def evaluate_model(model, test_loader, criterion, device):
             # outputs_euler = quaternion_to_euler(outputs)
             # targets_euler = quaternion_to_euler(targets)
 
-            for ii in range(len(inputs)):
+
+            for ii in range(len(targets)):
                 squared_err = squared_angular_difference(targets[ii], outputs[ii])
                 rmse = calculate_rmse(squared_err)
                 rmse_list.append(rmse)
 
+                # Calculate L2 (Euclidean) norm of the differences
+                # This computes: sqrt(dx^2 + dy^2 + dz^2) where dx,dy,dz are the angle differences
+                # angle_error = torch.norm(outputs[ii] - targets[ii], p=2, dim=1)
+                # angle_err_list.append(angle_error)
+
+            criterion = nn.CosineSimilarity()
+            loss = torch.mean(torch.abs(criterion(targets, outputs)))
             # loss = criterion(outputs, targets)
-            # total_loss += loss.item()
+            loss = 1 - loss
+            total_loss += loss.item()
 
             all_predictions.append(outputs.cpu().numpy())
             all_targets.append(targets.cpu().numpy())
@@ -456,6 +876,10 @@ def evaluate_model(model, test_loader, criterion, device):
 
     mean_rmse = np.mean(rmse_list)
 
+
+
+
+
     return mean_rmse, avg_loss, rmse_components, total_rmse
 
 
@@ -463,16 +887,22 @@ class IMUDVLWindowedDataset(Dataset):
     def __init__(self, series, window_size):
         self.imu_series = torch.FloatTensor(series[0])
         self.dvl_series = torch.FloatTensor(series[1])
-        self.euler_body_dvl_series = torch.FloatTensor(series[2])
+
+        # Convert euler angles to degrees if they're in radians
+        # Assuming the input is in degrees (based on your data),
+        # but we'll normalize to the range [-180, 180]
+        euler_angles = torch.FloatTensor(series[2])
+
+        # Normalize angles to [-180, 180] range
+        euler_angles = ((euler_angles + 180) % 360) - 180
+
+        self.euler_body_dvl_series = euler_angles
         self.window_size = window_size
 
     def __len__(self):
         return len(self.imu_series) - self.window_size
 
     def __getitem__(self, idx):
-        # window = self.imu_series[idx:idx + self.window_size + 1]
-        # return window[:-1], window[-1]
-
         imu_window = self.imu_series[idx:idx + self.window_size]
         dvl_window = self.dvl_series[idx:idx + self.window_size]
         euler_body_dvl_window = self.euler_body_dvl_series[idx:idx + self.window_size]
@@ -480,7 +910,7 @@ class IMUDVLWindowedDataset(Dataset):
         # Combine IMU and DVL data
         input_data = torch.cat((imu_window, dvl_window), dim=1)
 
-        # Return features (IMU and DVL data for the window) and labels (last IMU and DVL data points)
+        # Return features (IMU and DVL data for the window) and target (Euler angles in degrees)
         return input_data, euler_body_dvl_window[0]
 
 
@@ -715,14 +1145,21 @@ def squared_angular_difference(a, b):
     squared_diff = np.zeros(3)
 
     for i in range(3):
-        # Calculate both possible angular differences
-        diff1 = (a[i] - b[i]) % 360
-        diff2 = (b[i] - a[i]) % 360
+        # Normalize both angles to [-180, 180]
+        a_norm = ((a[i] + 180) % 360) - 180
+        b_norm = ((b[i] + 180) % 360) - 180
 
-        # Take the minimum of the two differences
-        squared_diff[i] = (min(diff1, diff2)) ** 2
+        # Calculate the absolute difference
+        diff = abs(a_norm - b_norm)
+
+        # Handle wrap-around case
+        if diff > 180:
+            diff = 360 - diff
+
+        squared_diff[i] = diff ** 2
 
     sum_diff = np.mean(squared_diff)
+
     return sum_diff
 
 
@@ -991,10 +1428,11 @@ def main(config):
             ## start of CNN ########################################################################
             # Set up the model, loss function, and optimizer
             # Create model with dropout
-            model = SimplerIMUResNet(dropout_rate=0.3)
+            #model = Resnet1chDnet(dropout_rate=0.3)
+            model = Resnet1chDnet()
 
-            # Loss function
-            criterion = EulerAnglesLoss()
+            # # Loss function
+            # criterion = EulerAnglesLoss()
 
             # Optimizer with weight decay (L2 regularization)
 
@@ -1015,7 +1453,6 @@ def main(config):
                 model=model,
                 train_loader=train_loader,
                 val_loader=val_loader,
-                criterion=criterion,
                 optimizer=optimizer,
                 num_epochs=25,
                 device=device,
@@ -1035,7 +1472,9 @@ def main(config):
             model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_window_{window_size}.pth')
 
             # Load model
-            model = SimplerIMUResNet(dropout_rate=0.3)
+            #model = SimplerIMUResNet(dropout_rate=0.3)
+            model = Resnet1chDnet()
+
             model.load_state_dict(torch.load(model_path, map_location=device))
             model.to(device)
             model.eval()
@@ -1058,12 +1497,11 @@ def main(config):
                     shuffle=False
                 )
 
-            # Loss function
-            criterion = nn.MSELoss()
+
 
             # Evaluate model
             mean_rmse, test_loss, test_rmse_components, test_total_rmse = evaluate_model(
-                model, test_loader, criterion, device
+                model, test_loader, device
             )
 
             rmse_test_list.append(mean_rmse)
@@ -1787,7 +2225,7 @@ if __name__ == '__main__':
         'yaw_gt_deg': -44.3,
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
         'test_type': 'simulated_data',  # Set to "real_data" or "simulated_data"
-        'train_model': True,  # Set to False to use the saved trained model
+        'train_model': False,  # Set to False to use the saved trained model
         'test_model': True,
         'test_baseline_model': True,
         'check_data': False,
