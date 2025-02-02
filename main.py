@@ -14,6 +14,7 @@ import torch
 from torch import nn
 from torch import Tensor
 from typing import Type, Any, Callable, Union, List, Optional
+from sklearn.model_selection import train_test_split
 
 import torch.nn.functional as F  # Add this import
 
@@ -428,7 +429,9 @@ class Resnet1chDnet(nn.Module):
 
         # Changed Conv2d to Conv1d since we're working with 1D data
         self.model.conv1 = nn.Conv1d(self.in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.model.fc = nn.Linear(512, output_features)
+        # Update the final fully connected layer to match the expected dimensions
+        num_features = self.model.fc.in_features  # Get the number of input features
+        self.model.fc = nn.Linear(num_features, output_features)
 
     def forward(self, x):
         # Permute the dimensions from [batch_size, sequence_length, channels] to [batch_size, channels, sequence_length]
@@ -830,57 +833,75 @@ def evaluate_model(model, test_loader, device):
     all_predictions = []
     all_targets = []
     rmse_list = []
-    angle_err_list = []
+
+    # Lists to store per-dataset metrics
+    dataset_rmse_lists = []
+    current_dataset_predictions = []
+    current_dataset_targets = []
+    samples_per_dataset = len(next(iter(test_loader))[0])  # Get batch size
+    batch_count = 0
 
     with torch.no_grad():
         for inputs, targets in test_loader:
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
-            # Convert quaternions to Euler angles
-            # outputs_euler = quaternion_to_euler(outputs)
-            # targets_euler = quaternion_to_euler(targets)
 
+            # Store predictions and targets
+            current_dataset_predictions.extend(outputs.cpu().numpy())
+            current_dataset_targets.extend(targets.cpu().numpy())
+            batch_count += 1
 
+            # Calculate per-batch metrics
             for ii in range(len(targets)):
-                squared_err = squared_angular_difference(targets[ii], outputs[ii])
+                squared_err = squared_angular_difference(targets[ii].cpu().numpy(), outputs[ii].cpu().numpy())
                 rmse = calculate_rmse(squared_err)
                 rmse_list.append(rmse)
 
-                # Calculate L2 (Euclidean) norm of the differences
-                # This computes: sqrt(dx^2 + dy^2 + dz^2) where dx,dy,dz are the angle differences
-                # angle_error = torch.norm(outputs[ii] - targets[ii], p=2, dim=1)
-                # angle_err_list.append(angle_error)
+            # Check if we've completed a dataset
+            if batch_count * samples_per_dataset >= len(test_loader.dataset):
+                # Calculate dataset-level metrics
+                dataset_predictions = np.array(current_dataset_predictions)
+                dataset_targets = np.array(current_dataset_targets)
 
+                # Calculate RMSE components for this dataset
+                rmse_components = np.sqrt(np.mean((dataset_predictions - dataset_targets) ** 2, axis=0))
+                dataset_rmse_lists.append(rmse_components)
+
+                # Reset for next dataset
+                current_dataset_predictions = []
+                current_dataset_targets = []
+                batch_count = 0
+
+            # Calculate loss
             criterion = nn.CosineSimilarity()
             loss = torch.mean(torch.abs(criterion(targets, outputs)))
-            # loss = criterion(outputs, targets)
             loss = 1 - loss
             total_loss += loss.item()
 
             all_predictions.append(outputs.cpu().numpy())
             all_targets.append(targets.cpu().numpy())
 
-            # squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees),
-            #                                                         euler_body_dvl_gt)
-            # squared_error_svd_baseline_list.append(squared_error_svd_baseline)
-
+    # Calculate overall metrics
     avg_loss = total_loss / len(test_loader)
     all_predictions = np.concatenate(all_predictions)
     all_targets = np.concatenate(all_targets)
 
-    # Calculate RMSE for each Euler angle
+    # Calculate overall RMSE components
     rmse_components = np.sqrt(np.mean((all_predictions - all_targets) ** 2, axis=0))
 
     # Calculate total RMSE
     total_rmse = np.sqrt(np.mean((all_predictions - all_targets) ** 2))
 
+    # Calculate mean RMSE across all samples
     mean_rmse = np.mean(rmse_list)
 
+    # Calculate mean RMSE components across datasets
+    if dataset_rmse_lists:
+        mean_dataset_rmse = np.mean(dataset_rmse_lists, axis=0)
+    else:
+        mean_dataset_rmse = rmse_components
 
-
-
-
-    return mean_rmse, avg_loss, rmse_components, total_rmse
+    return mean_rmse, avg_loss, mean_dataset_rmse, total_rmse
 
 
 class IMUDVLWindowedDataset(Dataset):
@@ -1294,6 +1315,69 @@ def calculate_min_rmse(rmse_values):
     return min_rmse, min_index
 
 
+def split_data_properly(simulated_data_pd, num_sequences, sequence_length, train_size=0.6, val_size=0.2):
+    # Create sequence indices
+    sequence_indices = np.arange(num_sequences)
+
+    # First split to separate test set
+    train_val_indices, test_indices = train_test_split(
+        sequence_indices,
+        test_size=0.2,
+        shuffle=True,
+        random_state=42
+    )
+
+    # Then split remaining data into train and validation
+    train_indices, val_indices = train_test_split(
+        train_val_indices,
+        test_size=val_size / (train_size + val_size),
+        shuffle=True,
+        random_state=42
+    )
+
+    # Extract data arrays
+    v_imu_body_full = np.array(simulated_data_pd.iloc[:, 1:4].T)
+    v_dvl_full = np.array(simulated_data_pd.iloc[:, 4:7].T)
+    euler_body_dvl_full = np.array(simulated_data_pd.iloc[:, 16:19].T)
+
+    # Create sequence lists
+    train_sequences = []
+    val_sequences = []
+    test_sequences = []
+
+    # Fill training sequences
+    for idx in train_indices:
+        start_idx = idx * sequence_length
+        end_idx = start_idx + sequence_length
+        train_sequences.append([
+            v_imu_body_full[:, start_idx:end_idx].T,
+            v_dvl_full[:, start_idx:end_idx].T,
+            euler_body_dvl_full[:, start_idx:end_idx].T
+        ])
+
+    # Fill validation sequences
+    for idx in val_indices:
+        start_idx = idx * sequence_length
+        end_idx = start_idx + sequence_length
+        val_sequences.append([
+            v_imu_body_full[:, start_idx:end_idx].T,
+            v_dvl_full[:, start_idx:end_idx].T,
+            euler_body_dvl_full[:, start_idx:end_idx].T
+        ])
+
+    # Fill test sequences
+    for idx in test_indices:
+        start_idx = idx * sequence_length
+        end_idx = start_idx + sequence_length
+        test_sequences.append([
+            v_imu_body_full[:, start_idx:end_idx].T,
+            v_dvl_full[:, start_idx:end_idx].T,
+            euler_body_dvl_full[:, start_idx:end_idx].T
+        ])
+
+    return train_sequences, val_sequences, test_sequences
+
+
 def main(config):
     # Example usage
 
@@ -1304,7 +1388,8 @@ def main(config):
 
     simulation_freq = 5
     single_dataset_duration_sec = 230  # should be same parameter value like in matlab simulation
-    single_dataset_len = single_dataset_duration_sec * simulation_freq
+    single_dataset_len = 1612
+    #single_dataset_len = single_dataset_duration_sec * simulation_freq
 
     # single_dataset_len = 1612
     # single_dataset_duration_sec = single_dataset_len/simulation_freq #should be same parameter value like in matlab simulation
@@ -1315,7 +1400,8 @@ def main(config):
     simulated_data_file_name = config['simulated_data_file_name']
     real_data_file_name = config['real_data_file_name']
     trained_model_base_path = config['trained_model_path']
-    window_sizes = [8]
+    # window_sizes = [5,10,25,50,75,100,150,200]
+    window_sizes = [100]
     batch_size = 32
     validation_precentage = 20
     num_of_check_baseline_iterations = 1
@@ -1353,7 +1439,7 @@ def main(config):
 
     ### Prepare the full dataset
     time = np.array(simulated_data_pd.iloc[:, 0].T)
-    num_of_simulated_datasets = len(time) // single_dataset_len
+    #num_of_simulated_datasets = len(time) // single_dataset_len
     v_imu_body_full = np.array(simulated_data_pd.iloc[:, 1:4].T)
     v_dvl_full = np.array(simulated_data_pd.iloc[:, 4:7].T)
     v_dvl_body_full = np.dot(rotation_matrix_ins_to_dvl.T, v_dvl_full)
@@ -1363,6 +1449,7 @@ def main(config):
     omega_imu_body_full = np.array(simulated_data_pd.iloc[:, 22:25].T)
     omega_skew_imu_body_full = skew_symetric(omega_imu_body_full)
 
+
     # for quaternion presentation
     # euler_body_dvl_full = np.array(simulated_data_pd.iloc[:, 16:20].T)
     # a_imu_body_full = np.array(simulated_data_pd.iloc[:, 20:23].T)
@@ -1370,7 +1457,7 @@ def main(config):
     # omega_skew_imu_body_full = skew_symetric(omega_imu_body_full)
 
     # split data into training and validation sets
-    index_of_split_series = int(num_of_simulated_datasets * (validation_precentage / 100))
+    # index_of_split_series = int(num_of_simulated_datasets * (validation_precentage / 100))
 
     current_time_test_list = []
     rmse_test_list = []
@@ -1381,25 +1468,41 @@ def main(config):
     v_imu_dvl_valid_series_list = []
     v_imu_dvl_test_series_list = []
     v_imu_dvl_test_real_data_list = []
-    model_paths = []
 
-    for i in range(0, index_of_split_series):
-        v_imu_dvl_train_series_list.append(
-            [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-             v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-             euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
+    # Calculate number of sequences
+    single_dataset_len = single_dataset_duration_sec * simulation_freq
+    num_of_simulated_datasets = len(simulated_data_pd) // single_dataset_len
 
-    for i in range(index_of_split_series, num_of_simulated_datasets - 1):
-        v_imu_dvl_valid_series_list.append(
-            [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-             v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-             euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
+    train_sequences, val_sequences, test_sequences = split_data_properly(
+        simulated_data_pd=simulated_data_pd,
+        num_sequences=num_of_simulated_datasets,
+        sequence_length=single_dataset_len,
+        train_size=0.6,
+        val_size=0.2
+    )
 
-    for i in range(num_of_simulated_datasets - 1, num_of_simulated_datasets):
-        v_imu_dvl_test_series_list.append(
-            [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-             v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-             euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
+    # Replace your existing lists with the new split sequences
+    v_imu_dvl_train_series_list = train_sequences
+    v_imu_dvl_valid_series_list = val_sequences
+    v_imu_dvl_test_series_list = test_sequences
+
+    # for i in range(0, index_of_split_series):
+    #     v_imu_dvl_train_series_list.append(
+    #         [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
+    #
+    # for i in range(index_of_split_series, num_of_simulated_datasets - 1):
+    #     v_imu_dvl_valid_series_list.append(
+    #         [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
+    #
+    # for i in range(num_of_simulated_datasets - 1, num_of_simulated_datasets):
+    #     v_imu_dvl_test_series_list.append(
+    #         [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
 
     v_imu_dvl_test_real_data_list.append(
         [v_imu_body_real_data_full.T, v_dvl_real_data_full.T, euler_body_dvl_real_data_full.T])
@@ -1575,8 +1678,7 @@ def main(config):
 
             for num_samples in tqdm(range(2, real_dataset_len, 20)):  # Start from 2, increment by 5
 
-                current_time = (
-                                           num_samples / real_dataset_len) * real_dataset_len  # because it 1hz - one sample per second
+                current_time = (num_samples / real_dataset_len) * real_dataset_len  # because it 1hz - one sample per second
 
                 # prepare the data
                 v_imu_sampled = v_imu_body_real_data_full[:, 0:num_samples]
@@ -1688,8 +1790,7 @@ def main(config):
                     current_time = (num_samples / single_dataset_len) * single_dataset_duration_sec
 
                     # Sample the data
-                    start_idx = (
-                                            num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter) * single_dataset_len
+                    start_idx = (num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter) * single_dataset_len
                     v_imu_sampled = v_imu_body_full[:, start_idx:start_idx + num_samples]
                     v_dvl_sampled = v_dvl_full[:, start_idx:start_idx + num_samples]
                     a_imu_sampled = a_imu_body_full[:, start_idx:start_idx + num_samples]
@@ -2225,7 +2326,7 @@ if __name__ == '__main__':
         'yaw_gt_deg': -44.3,
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
         'test_type': 'simulated_data',  # Set to "real_data" or "simulated_data"
-        'train_model': False,  # Set to False to use the saved trained model
+        'train_model': True,  # Set to False to use the saved trained model
         'test_model': True,
         'test_baseline_model': True,
         'check_data': False,
