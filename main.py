@@ -1315,14 +1315,14 @@ def calculate_min_rmse(rmse_values):
     return min_rmse, min_index
 
 
-def split_data_properly(simulated_data_pd, num_sequences, sequence_length, train_size=0.6, val_size=0.2):
+def split_data_properly(simulated_data_pd, num_sequences, sequence_length, train_size=0.1, val_size=0.1):
     # Create sequence indices
     sequence_indices = np.arange(num_sequences)
 
     # First split to separate test set
     train_val_indices, test_indices = train_test_split(
         sequence_indices,
-        test_size=0.2,
+        test_size=0.1,
         shuffle=True,
         random_state=42
     )
@@ -1388,20 +1388,22 @@ def main(config):
 
     simulation_freq = 5
     single_dataset_duration_sec = 230  # should be same parameter value like in matlab simulation
-    single_dataset_len = 1612
-    #single_dataset_len = single_dataset_duration_sec * simulation_freq
+    simulation_single_dataset_len = 1170
+    real_single_dataset_len = 400
+    #simulation_single_dataset_len = 1612
+    #simulation_single_dataset_len = single_dataset_duration_sec * simulation_freq
 
-    # single_dataset_len = 1612
-    # single_dataset_duration_sec = single_dataset_len/simulation_freq #should be same parameter value like in matlab simulation
+    # simulation_single_dataset_len = 1612
+    # single_dataset_duration_sec = simulation_single_dataset_len/simulation_freq #should be same parameter value like in matlab simulation
 
     # single_dataset_duration_sec = 230 #should be same parameter value like in matlab simulation
-    # single_dataset_len = single_dataset_duration_sec * simulation_freq
+    # simulation_single_dataset_len = single_dataset_duration_sec * simulation_freq
     data_path = config['data_path']
     simulated_data_file_name = config['simulated_data_file_name']
     real_data_file_name = config['real_data_file_name']
     trained_model_base_path = config['trained_model_path']
-    # window_sizes = [5,10,25,50,75,100,150,200]
-    window_sizes = [100]
+    window_sizes = [5]
+    #window_sizes = [5]
     batch_size = 32
     validation_precentage = 20
     num_of_check_baseline_iterations = 1
@@ -1420,13 +1422,23 @@ def main(config):
 
     ##prepare real data dataset
     real_data_pd = pd.read_csv(os.path.join(data_path, f'{real_data_file_name}'), header=None)
-    v_imu_body_real_data_full = np.array(real_data_pd.iloc[:, 4:7].T)
+    v_imu_body_real_data_full = np.array(real_data_pd.iloc[:, 1:4].T)
     # v_imu_body_real_data_full = v_imu_body_real_data_full[:, 150:300]
-    v_dvl_real_data_full = np.array(real_data_pd.iloc[:, 13:16].T)
+    v_dvl_real_data_full = np.array(real_data_pd.iloc[:, 4:7].T)
     # v_dvl_real_data_full = v_dvl_real_data_full[:, 150:300]
-    euler_body_dvl_real_data_full = np.array(real_data_pd.iloc[:, 16:19].T)
+    euler_body_dvl_real_data_full = np.array(real_data_pd.iloc[:, 7:10].T)
     # euler_body_dvl_real_data_full = euler_body_dvl_real_data_full[:, 150:300]
     real_dataset_len = len(v_imu_body_real_data_full[1])
+
+    # ##prepare real data dataset
+    # real_data_pd = pd.read_csv(os.path.join(data_path, f'{real_data_file_name}'), header=None)
+    # v_imu_body_real_data_full = np.array(real_data_pd.iloc[:, 4:7].T)
+    # # v_imu_body_real_data_full = v_imu_body_real_data_full[:, 150:300]
+    # v_dvl_real_data_full = np.array(real_data_pd.iloc[:, 13:16].T)
+    # # v_dvl_real_data_full = v_dvl_real_data_full[:, 150:300]
+    # euler_body_dvl_real_data_full = np.array(real_data_pd.iloc[:, 16:19].T)
+    # # euler_body_dvl_real_data_full = euler_body_dvl_real_data_full[:, 150:300]
+    # real_dataset_len = len(v_imu_body_real_data_full[1])
 
     ##prepare real data for check
     # real_data_trajectory_index = config['real_data_trajectory_index']
@@ -1439,7 +1451,7 @@ def main(config):
 
     ### Prepare the full dataset
     time = np.array(simulated_data_pd.iloc[:, 0].T)
-    #num_of_simulated_datasets = len(time) // single_dataset_len
+    #num_of_simulated_datasets = len(time) // simulation_single_dataset_len
     v_imu_body_full = np.array(simulated_data_pd.iloc[:, 1:4].T)
     v_dvl_full = np.array(simulated_data_pd.iloc[:, 4:7].T)
     v_dvl_body_full = np.dot(rotation_matrix_ins_to_dvl.T, v_dvl_full)
@@ -1470,13 +1482,12 @@ def main(config):
     v_imu_dvl_test_real_data_list = []
 
     # Calculate number of sequences
-    single_dataset_len = single_dataset_duration_sec * simulation_freq
-    num_of_simulated_datasets = len(simulated_data_pd) // single_dataset_len
+    num_of_simulated_datasets = len(simulated_data_pd) // simulation_single_dataset_len
 
     train_sequences, val_sequences, test_sequences = split_data_properly(
         simulated_data_pd=simulated_data_pd,
         num_sequences=num_of_simulated_datasets,
-        sequence_length=single_dataset_len,
+        sequence_length=simulation_single_dataset_len,
         train_size=0.6,
         val_size=0.2
     )
@@ -1488,21 +1499,21 @@ def main(config):
 
     # for i in range(0, index_of_split_series):
     #     v_imu_dvl_train_series_list.append(
-    #         [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-    #          v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-    #          euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
+    #         [v_imu_body_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
+    #          v_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
+    #          euler_body_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T])
     #
     # for i in range(index_of_split_series, num_of_simulated_datasets - 1):
     #     v_imu_dvl_valid_series_list.append(
-    #         [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-    #          v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-    #          euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
+    #         [v_imu_body_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
+    #          v_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
+    #          euler_body_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T])
     #
     # for i in range(num_of_simulated_datasets - 1, num_of_simulated_datasets):
     #     v_imu_dvl_test_series_list.append(
-    #         [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-    #          v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
-    #          euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
+    #         [v_imu_body_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
+    #          v_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
+    #          euler_body_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T])
 
     v_imu_dvl_test_real_data_list.append(
         [v_imu_body_real_data_full.T, v_dvl_real_data_full.T, euler_body_dvl_real_data_full.T])
@@ -1601,7 +1612,6 @@ def main(config):
                 )
 
 
-
             # Evaluate model
             mean_rmse, test_loss, test_rmse_components, test_total_rmse = evaluate_model(
                 model, test_loader, device
@@ -1614,39 +1624,39 @@ def main(config):
             current_time = (window_size / real_dataset_len) * real_dataset_len
             current_time_test_list.append(current_time)
 
-            print(f"Test Loss: {test_loss:.4f}")
-            print(
-                f"Test RMSE (Roll, Pitch, Yaw): {test_rmse_components[0]:.4f}, {test_rmse_components[1]:.4f}, {test_rmse_components[2]:.4f}")
-            print(f"Test Total RMSE: {test_total_rmse:.4f}")
+            # print(f"Test Loss: {test_loss:.4f}")
+            # print(
+            #     f"Test RMSE (Roll, Pitch, Yaw): {test_rmse_components[0]:.4f}, {test_rmse_components[1]:.4f}, {test_rmse_components[2]:.4f}")
+            print(f"Test Mean RMSE: {mean_rmse:.4f}")
 
-        #### Plot test results
-        # Create a new figure with 3 subplots (one for each axis)
-        fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15), sharex=True)
-        # Set the color to purple for ax1, ax2, and ax3
-        color = 'purple'
-        # Plot rmse roll angle
-        ax1.plot(current_time_test_list, rmse_roll_test_list, color=color)
-        ax1.set_ylabel('Roll RMSE Test [deg]')
-        ax1.legend()
-        ax1.grid(True)
-        # Plot rmse pitch angle
-        ax2.plot(current_time_test_list, rmse_pitch_test_list, color=color)
-        ax2.set_ylabel('Pitch RMSE Test [deg]')
-        ax2.legend()
-        ax2.grid(True)
-        # Plot rmse yaw angle
-        ax3.plot(current_time_test_list, rmse_yaw_test_list, color=color)
-        ax3.set_ylabel('Yaw RMSE Test [deg]')
-        ax3.legend()
-        ax3.grid(True)
-        # Plot rmse angle
-        ax4.plot(current_time_test_list, rmse_test_list)
-        ax4.set_ylabel('Total RMSE Test [deg]')
-        ax4.set_xlabel('T [sec]')
-        ax4.legend()
-        ax4.grid(True)
-        plt.tight_layout()
-        plt.show(block=False)
+        # #### Plot test results
+        # # Create a new figure with 3 subplots (one for each axis)
+        # fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15), sharex=True)
+        # # Set the color to purple for ax1, ax2, and ax3
+        # color = 'purple'
+        # # Plot rmse roll angle
+        # ax1.plot(current_time_test_list, rmse_roll_test_list, color=color)
+        # ax1.set_ylabel('Roll RMSE Test [deg]')
+        # ax1.legend()
+        # ax1.grid(True)
+        # # Plot rmse pitch angle
+        # ax2.plot(current_time_test_list, rmse_pitch_test_list, color=color)
+        # ax2.set_ylabel('Pitch RMSE Test [deg]')
+        # ax2.legend()
+        # ax2.grid(True)
+        # # Plot rmse yaw angle
+        # ax3.plot(current_time_test_list, rmse_yaw_test_list, color=color)
+        # ax3.set_ylabel('Yaw RMSE Test [deg]')
+        # ax3.legend()
+        # ax3.grid(True)
+        # # Plot rmse angle
+        # ax4.plot(current_time_test_list, rmse_test_list)
+        # ax4.set_ylabel('Total RMSE Test [deg]')
+        # ax4.set_xlabel('T [sec]')
+        # ax4.legend()
+        # ax4.grid(True)
+        # plt.tight_layout()
+        # plt.show(block=False)
 
     ### Base Line Model
     # Lists to store results
@@ -1668,15 +1678,16 @@ def main(config):
     squared_error_gd_baseline_list = []
     squared_centered_error_baseline_list = []
     current_time_baseline_list = []
-    euler_angles_svd_degrees_list = []
+    #euler_angles_svd_degrees_list = []
     euler_angles_gd_degrees_list = []
     euler_angles_centered_degrees_list = []
+    euler_angles_svd_degrees_list = [[] for _ in range(simulation_single_dataset_len)]
 
     if (config['test_baseline_model']):
 
         if (config['test_type'] == "real_data"):
 
-            for num_samples in tqdm(range(2, real_dataset_len, 20)):  # Start from 2, increment by 5
+            for num_samples in tqdm(range(2, real_dataset_len, 1)):  # Start from 2, increment by 5
 
                 current_time = (num_samples / real_dataset_len) * real_dataset_len  # because it 1hz - one sample per second
 
@@ -1744,9 +1755,28 @@ def main(config):
 
         elif (config['test_type'] == "simulated_data"):
 
+
+
+            # for dataset in v_imu_dvl_test_series_list:
+            #
+            #     v_imu_dataset = torch.FloatTensor(dataset[0])
+            #     v_dvl_dataset = torch.FloatTensor(dataset[1])
+            #     euler_body_dvl_gt_dataset = torch.FloatTensor(dataset[2])
+            #
+            #     for num_samples in tqdm(range(2, simulation_single_dataset_len, 20)):  # should Start from 2, increment by 5
+            #         v_imu_sampled = v_imu_dataset[:, 0:num_samples]
+            #         v_dvl_sampled = v_dvl_dataset[:, 0:num_samples]
+            #
+            #         # Velocity-based Method: Run SVD solution
+            #         euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled, v_dvl_sampled)
+            #         euler_angles_svd_degrees = np.degrees(euler_angles_svd_rads)
+            #         euler_angles_svd_degrees_list[num_samples].append(euler_angles_svd_degrees)
+
+
+
             # Calculate number of sample points
-            num_sample_points = (single_dataset_len - 10) // 10  # = 117 for single_dataset_len = 1170
-            num_samples_range = range(10, single_dataset_len, 10)  # This will give us consistent lengths
+            num_sample_points = (simulation_single_dataset_len - 10) // 10  # = 117 for simulation_single_dataset_len = 1170
+            num_samples_range = range(10, simulation_single_dataset_len, 2)  # This will give us consistent lengths
 
             # Initialize arrays to store all RMSE values across runs
             all_rmse_baseline = np.zeros((len(num_samples_range), num_of_check_baseline_iterations))
@@ -1758,6 +1788,7 @@ def main(config):
             print(f"num_of_samples:{num_of_simulated_datasets}")
 
             for check_iter in range(num_of_check_baseline_iterations):
+
 
                 print(f"curr_check_idx: {num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter}")
 
@@ -1785,12 +1816,12 @@ def main(config):
 
                 current_time_baseline_list.clear()
 
-                for num_samples in tqdm(range(2, single_dataset_len, 20)):  # should Start from 2, increment by 5
+                for num_samples in tqdm(range(2, simulation_single_dataset_len, 1)):  # should Start from 2, increment by 5
 
-                    current_time = (num_samples / single_dataset_len) * single_dataset_duration_sec
+                    current_time = (num_samples / simulation_single_dataset_len) * single_dataset_duration_sec
 
                     # Sample the data
-                    start_idx = (num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter) * single_dataset_len
+                    start_idx = (num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter) * simulation_single_dataset_len
                     v_imu_sampled = v_imu_body_full[:, start_idx:start_idx + num_samples]
                     v_dvl_sampled = v_dvl_full[:, start_idx:start_idx + num_samples]
                     a_imu_sampled = a_imu_body_full[:, start_idx:start_idx + num_samples]
@@ -2015,300 +2046,6 @@ def main(config):
         # Show plot
         plt.show(block=False)
 
-    # if (config['check_data']):
-    #     real_data_lla_rad = np.array(real_data_gt_pd.iloc[:, 1:4].T)
-    #     # Convert LLA to ECEF coordinates
-    #     real_ecef_data = navpy.lla2ecef(real_data_lla_rad[0], real_data_lla_rad[1], real_data_lla_rad[2],latlon_unit='rad',alt_unit='m')
-    #
-    #     # Extract x, y, z coordinates from the ECEF data
-    #     x = real_ecef_data[:, 0]
-    #     y = real_ecef_data[:, 1]
-    #     z = real_ecef_data[:, 2]
-    #
-    #     # Create a 3D plot
-    #     fig = plt.figure()
-    #     ax = fig.add_subplot(111, projection='3d')
-    #
-    #     # Plot the trajectory
-    #     ax.plot(x, y, z, label='Trajectory')
-    #
-    #     # Set labels and title
-    #     ax.set_xlabel('X')
-    #     ax.set_ylabel('Y')
-    #     ax.set_zlabel('Z')
-    #     ax.set_title('3D Position in ECEF')
-    #
-    #     # Add a legend
-    #     ax.legend()
-    #
-    #     # Display the plot
-    #     plt.show(block = False)
-    #     plt.savefig('3D_position_ecef')
-
-    # real_data_imu_pd
-    # real_data_dvl_pd
-    # real_data_gt_pd
-    # real_data_pd = pd.read_csv(os.path.join(data_path, f'{real_data_file_name}'), header=None)
-    # real_data_time = np.array(real_data_pd.iloc[:, 0].T)
-    # v_imu_body_real_data_full = np.array(real_data_pd.iloc[:, 4:7].T)
-    # v_dvl_real_data_full = np.array(real_data_pd.iloc[:, 13:16].T)
-    # euler_body_dvl_real_data_full = np.array(real_data_pd.iloc[:, 16:19].T)
-    # real_dataset_len = len(v_imu_body_real_data_full[1])
-
-    # lla_rad = np.array([simulated_data_pd['latitude'], simulated_data_pd['longitude'], simulated_data_pd['altitude']])
-    # lla_deg = np.array([np.rad2deg(simulated_data_pd['latitude']), np.rad2deg(simulated_data_pd['longitude']), simulated_data_pd['altitude']])
-    #
-    # # Create a 3D plot
-    # fig = plt.figure()
-    # ax = fig.add_subplot(111, projection='3d')
-    #
-    # # Plot the trajectory
-    # ax.plot(lla_deg[0], lla_deg[1], lla_deg[2], label='Trajectory')
-    #
-    # # Set labels and title
-    # ax.set_xlabel('X')
-    # ax.set_ylabel('Y')
-    # ax.set_zlabel('Z')
-    # ax.set_title('3D Position in lla deg')
-    #
-    # # Add a legend
-    # ax.legend()
-    #
-    # # Display the plot
-    # plt.show(block = False)
-    # plt.savefig('3D_position_lla_deg')
-
-    # fig , axes = plt.subplots(ncols = 1 , nrows = 3 , figsize = (15,8))
-    # fig.suptitle('LLA deg seperatly')
-    # axes[0].plot(lla_deg[0], label = 'Latitude')
-    # axes[0].grid()
-    # axes[1].plot(lla_deg[1], label='longitude')
-    # axes[1].grid()
-    # axes[2].plot(lla_deg[2], label='altitude')
-    # axes[2].grid()
-    # plt.show(block = False)
-    #
-    #
-    # # # Convert LLA to ECEF coordinates
-    # ecef_data = navpy.lla2ecef(lla_deg[0], lla_deg[1], lla_deg[2],latlon_unit='rad',alt_unit='m')
-    #
-
-
-'''
-        # Create a new figure with 3 subplots (one for each axis)
-        fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 15), sharex=True)
-
-        # Plot X-axis velocities
-        ax1.plot(time, v_gt_body_full[0], label='GT')
-        ax1.plot(time, v_imu_body_full[0], label='EST')
-        ax1.set_ylabel('Vx [m/s]')
-        ax1.legend()
-        ax1.grid(True)
-
-        # Plot Y-axis velocities
-        ax2.plot(time, v_gt_body_full[1], label='GT')
-        ax2.plot(time, v_imu_body_full[1], label='EST')
-        ax2.set_ylabel('Vy [m/s]')
-        ax2.legend()
-        ax2.grid(True)
-
-        # Plot Z-axis velocities
-        ax3.plot(time, v_gt_body_full[2], label='GT')
-        ax3.plot(time, v_imu_body_full[2], label='EST')
-        ax3.set_xlabel('T [sec]')
-        ax3.set_ylabel('Vz [m/s]')
-        ax3.legend()
-        ax3.grid(True)
-
-        #plt.suptitle('GT velocity in body[m/s] and IMU velocity in body[m/s] vs Time[sec]')
-        plt.tight_layout()
-        plt.show(block = False)
-
-'''
-
-# curr_v_gt_ned_x = v_gt_body_full[0,:].T
-
-# dt = np.diff(time).mean()# or whatever your time step is
-# x_n = cumulative_trapezoid(v_gt_body_full[0,:], dx=dt, initial=0)
-# y_n = cumulative_trapezoid(v_gt_body_full[1,:], dx=dt, initial=0)
-# z_n = cumulative_trapezoid(v_gt_body_full[2,:], dx=dt, initial=0)
-
-
-# x_n = pos_ned[0,:]
-# y_n = pos_ned[1,:]
-# z_n = pos_ned[2,:]
-
-
-# fig = plt.figure(figsize=(8, 6))
-# ax = fig.add_subplot(111, projection='3d')
-# ax.plot(x_n, y_n, z_n, 'b-', label='AUV trajectory')
-# ax.set_xlabel('X position (m)')
-# ax.set_ylabel('Y position (m)')
-# ax.set_zlabel('Z position (m)')
-# ax.set_title('AUV Trajectory NED in 3D')
-# plt.legend()
-# plt.grid(True)
-# plt.show(block=False)
-
-
-# Plot trajectory
-
-
-# # Create a new figure with 3 subplots (one for each axis)
-# fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(12, 15), sharex=True)
-#
-# # Plot X-axis velocities
-# ax1.plot(time, v_gt_body_full[0], label='V_gt_x')
-# ax1.plot(time, v_dvl_body_full[0], label='V_dvl_x')
-# ax1.set_ylabel('X Velocity [m/s]')
-# ax1.legend()
-# ax1.grid(True)
-#
-# # Plot Y-axis velocities
-# ax2.plot(time, v_gt_body_full[1], label='V_gt_y')
-# ax2.plot(time, v_dvl_body_full[1], label='V_dvl_y')
-# ax2.set_ylabel('Y Velocity [m/s]')
-# ax2.legend()
-# ax2.grid(True)
-#
-# # Plot Z-axis velocities
-# ax3.plot(time, v_gt_body_full[2], label='V_gt_z')
-# ax3.plot(time, v_dvl_body_full[2], label='V_dvl_z')
-# ax3.set_xlabel('Time (sec)')
-# ax3.set_ylabel('Z Velocity [m/s]')
-# ax3.legend()
-# ax3.grid(True)
-#
-# plt.suptitle('GT velocity in body [m/s] and est dvl velocity in body [m/s] vs Time [sec]')
-# plt.tight_layout()
-# plt.show(block = False)
-# plt.savefig('v_GT_and_v_dvl_body_vs_Time.png')
-
-
-# ##################### Use real data from AUV SNAPIR experiments ########################################################
-#     if config['auv_snapir_data']:
-#         experiment_index = config['experiment_index']
-#         auv_data_path = "C:\\Users\\damar\\Desktop\\Thesis\\AUV_Snapir\\auv_snapir_nadav_recordings\\DataAUV"
-#         auv_data_dvl_path = "C:\\Users\\damar\\Desktop\\Thesis\\AUV_Snapir\\auv_snapir_nadav_recordings\\DataAUV\\DVL1.txt"
-#         auv_data_imu_path = "C:\\Users\\damar\\Desktop\\Thesis\\AUV_Snapir\\auv_snapir_nadav_recordings\\DataAUV\\IMU1.txt"
-#         auv_data_nav_path = "C:\\Users\\damar\\Desktop\\Thesis\\AUV_Snapir\\auv_snapir_nadav_recordings\\DataAUV\\NAV1.txt"
-#
-#         # auv_data_files = [f for f in os.listdir(auv_data_path)]
-#
-#         # Read data from the .txt file
-#         dvl_data_file_name = f'DVL{experiment_index}.txt'
-#         imu_data_file_name = f'IMU{experiment_index}.txt'
-#         nav_data_file_name = f'Nav{experiment_index}.txt'
-#
-#         auv_data_dvl_pd = pd.read_csv(os.path.join(auv_data_path, dvl_data_file_name), sep='\t')
-#         auv_data_imu_pd = pd.read_csv(os.path.join(auv_data_path, imu_data_file_name), sep='\t')
-#         auv_data_nav_pd = pd.read_csv(os.path.join(auv_data_path, nav_data_file_name), sep='\t')
-#
-#
-#         lla_data = np.array([auv_data_nav_pd['latitude'], auv_data_nav_pd['longitude'], auv_data_nav_pd['altitude']])
-#         lla_data = lla_data.T
-#
-#         # # Convert LLA to ECEF coordinates
-#         # ecef_data = navpy.lla2ecef(auv_data_nav_pd['latitude'], auv_data_nav_pd['longitude'], auv_data_nav_pd['altitude'])
-#         #
-#         # # Extract x, y, z coordinates from the ECEF data
-#         # x = ecef_data[:, 0]
-#         # y = ecef_data[:, 1]
-#         # z = ecef_data[:, 2]
-#
-#         # Create a 3D plot
-#         fig = plt.figure()
-#         ax = fig.add_subplot(111, projection='3d')
-#
-#         # Plot the trajectory
-#         #ax.plot(x, y, z, label='Trajectory')
-#
-#         # # Set labels and title
-#         # ax.set_xlabel('X')
-#         # ax.set_ylabel('Y')
-#         # ax.set_zlabel('Z')
-#         # ax.set_title('3D Trajectory')
-#
-#         # Add a legend
-#         #ax.legend()
-#
-#         # Display the plot
-#         # plt.show(block = False)
-#
-#         # Create a new DataFrame with modified 'time' column
-#         auv_data_imu_modified_pd = auv_data_imu_pd.copy()
-#         auv_data_imu_modified_pd['time'] = auv_data_imu_modified_pd['time'].astype(str).str[:-2]
-#
-#
-#         # Create a new DataFrame with modified 'time' column
-#         auv_data_nav_modified_pd = auv_data_nav_pd.copy()
-#         auv_data_nav_modified_pd['time'] = auv_data_nav_modified_pd['time'].astype(str).str[:-5]
-#
-#
-#
-#         # Create a new DataFrame to store the matched IMU data, without last 2 digits of the 'time' column
-#         matched_imu_data = pd.DataFrame(columns=auv_data_imu_pd.columns)
-#
-#         # Create a new DataFrame to store the matched NAV data, without last 2 digits of the 'time' column
-#         matched_nav_data = pd.DataFrame(columns=auv_data_nav_pd.columns)
-#
-#         for time_dvl in auv_data_dvl_pd['time']:
-#             time_dvl_str = str(time_dvl)[:-5]
-#
-#             # Find the matching row in auv_data_imu_pd based on the 'Time' column with the last two characters as "don't care"
-#             matching_rows = auv_data_nav_modified_pd[auv_data_nav_modified_pd['time'].astype(str) == time_dvl_str]
-#
-#             if not matching_rows.empty:
-#                 # Get the first matching row
-#                 matching_row = matching_rows.iloc[0]
-#
-#                 # Concatenate the matching row with matched_imu_data
-#                 matched_nav_data = pd.concat([matched_nav_data, matching_row.to_frame().T], ignore_index=True)
-#             else:
-#                 print(f"No matching row found for time: {time_dvl_str}")
-#
-#
-#         v_dvl_sampled = np.array([auv_data_dvl_pd['speedX'], auv_data_dvl_pd['speedY'], auv_data_dvl_pd['speedZ']])
-#
-#         v_nav_sampled_enu = np.array([matched_nav_data['speedNorth'], matched_nav_data['speedEast'], matched_nav_data['speedUp']])
-#
-#         euler_angles_ref_body = np.array([matched_nav_data['roll'], matched_nav_data['pitch'], matched_nav_data['heading']])
-#
-#         R_enu_ned = np.array([[0, 1, 0],
-#                             [1, 0, 0],
-#                             [0, 0, -1]])
-#
-#         v_nav_sampled_ned = np.dot(R_enu_ned, v_nav_sampled_enu)
-#
-#
-#
-#         R_ned_body = []
-#         v_nav_sampled_body_list = []
-#
-#         for i, time_value in enumerate(euler_angles_ref_body[0]):
-#             R_ned_body.append(euler_angles_to_rotation_matrix(euler_angles_ref_body[0][i], euler_angles_ref_body[1][i], euler_angles_ref_body[2][i]))
-#             # R_ned_body_array = np.array(R_ned_body)
-#             # print('check')
-#
-#         R_ned_body_array = np.array(R_ned_body)
-#
-#
-#         for i in range(0, len(R_ned_body_array)):
-#             v_nav_sampled_body_list.append(np.dot(R_ned_body_array[i], v_nav_sampled_ned[:,i]))
-#             # print('check')
-#
-#
-#         v_nav_sampled_body = np.array(v_nav_sampled_body_list)
-#
-#         v_nav_sampled_body = v_nav_sampled_body.transpose()
-#         v_nav_sampled_body = v_nav_sampled_body.astype(np.float64)
-#
-#         # Run SVD solution for the Wahba problem
-#         euler_angles_rads = run_svd_solution_for_wahba_problem(v_nav_sampled_body, v_dvl_sampled)
-#         euler_angles_svd_degrees = np.degrees(euler_angles_rads)
-#
-#         print("euler_angles_svd_degrees: ")
-#         print(euler_angles_svd_degrees)
 
 
 if __name__ == '__main__':
@@ -2325,15 +2062,15 @@ if __name__ == '__main__':
         'pitch_gt_deg': 0.2,
         'yaw_gt_deg': -44.3,
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
-        'test_type': 'simulated_data',  # Set to "real_data" or "simulated_data"
-        'train_model': True,  # Set to False to use the saved trained model
+        'test_type': 'real_data',  # Set to "real_data" or "simulated_data"
+        'train_model': False,  # Set to False to use the saved trained model
         'test_model': True,
         'test_baseline_model': True,
         'check_data': False,
         'simulated_data_file_name': 'simulated_data_output.csv',
         'trained_model_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work\\trained_model",
-        'real_data_file_name': 'real_data_output.csv',
-        'real_data_trajectory_index': 9,
+        #'real_data_file_name': 'real_data_output.csv',
+        'real_data_file_name': 'transformed_real_data_output.csv',
         'real_imu_file_name': 'IMU_trajectory.csv',
         'real_dvl_file_name': 'DVL_trajectory.csv',
         'real_gt_file_name': 'GT_trajectory.csv'
