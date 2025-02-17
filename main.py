@@ -20,9 +20,6 @@ import torch.nn.functional as F  # Add this import
 
 
 
-
-
-
 __all__ = [
     "ResNet",
     "resnet18_1d",
@@ -426,6 +423,17 @@ class Resnet1chDnet(nn.Module):
         super(Resnet1chDnet, self).__init__()
 
         self.model = resnet18_1d()
+
+        # "ResNet",
+        # "resnet18_1d",
+        # "resnet34_1d",
+        # "resnet50_1d",
+        # "resnet101_1d",
+        # "resnet152_1d",
+        # "resnext50_32x4d_1d",
+        # "resnext101_32x8d_1d",
+        # "wide_resnet50_2_1d",
+        # "wide_resnet101_2_1d",
 
         # Changed Conv2d to Conv1d since we're working with 1D data
         self.model.conv1 = nn.Conv1d(self.in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
@@ -1299,6 +1307,7 @@ def rotation_matrix_to_euler_zyx(R):
 
     # Computing roll (around X axis)
     roll = np.arctan2(r23, r33)
+    roll = np.arctan2(r23, r33)
 
     # Computing pitch (around Y axis)
     pitch = np.arcsin(-r13)
@@ -1315,7 +1324,7 @@ def calculate_min_rmse(rmse_values):
     return min_rmse, min_index
 
 
-def split_data_properly(simulated_data_pd, num_sequences, sequence_length, train_size=0.1, val_size=0.1):
+def split_data_properly(data_pd, num_sequences, sequence_length, train_size=0.1, val_size=0.1):
     # Create sequence indices
     sequence_indices = np.arange(num_sequences)
 
@@ -1336,9 +1345,9 @@ def split_data_properly(simulated_data_pd, num_sequences, sequence_length, train
     )
 
     # Extract data arrays
-    v_imu_body_full = np.array(simulated_data_pd.iloc[:, 1:4].T)
-    v_dvl_full = np.array(simulated_data_pd.iloc[:, 4:7].T)
-    euler_body_dvl_full = np.array(simulated_data_pd.iloc[:, 16:19].T)
+    v_imu_body_full = np.array(data_pd.iloc[:, 1:4].T)
+    v_dvl_full = np.array(data_pd.iloc[:, 4:7].T)
+    euler_body_dvl_full = np.array(data_pd.iloc[:, 7:10].T)
 
     # Create sequence lists
     train_sequences = []
@@ -1386,26 +1395,46 @@ def main(config):
     pitch_gt_deg = config['pitch_gt_deg']
     yaw_gt_deg = config['yaw_gt_deg']
 
-    simulation_freq = 5
-    single_dataset_duration_sec = 230  # should be same parameter value like in matlab simulation
-    simulation_single_dataset_len = 1170
-    real_single_dataset_len = 400
-    #simulation_single_dataset_len = 1612
-    #simulation_single_dataset_len = single_dataset_duration_sec * simulation_freq
+    simulation_freq = 1
+    single_dataset_duration_sec = None  # should be same parameter value like in matlab simulation
+    single_dataset_len = None
 
-    # simulation_single_dataset_len = 1612
-    # single_dataset_duration_sec = simulation_single_dataset_len/simulation_freq #should be same parameter value like in matlab simulation
+    if(config['test_type'] == 'simulated_data'):
+        single_dataset_len = config['simulated_dataset_len']
+        single_dataset_duration_sec = config['simulated_dataset_duration_sec']
+        simulation_freq = 5
+    elif((config['test_type'] == 'transformed_real_data') or (config['test_type'] == 'simulated_imu_from_real_gt_data')):
+        single_dataset_len = config['real_dataset_len']
+        single_dataset_duration_sec = config['real_dataset_duration_sec']
+        simulation_freq = 1
+
+    #real_single_dataset_len = 400
+    #single_dataset_len = 1612
+    #single_dataset_len = single_dataset_duration_sec * simulation_freq
+
+    # single_dataset_len = 1612
+    # single_dataset_duration_sec = single_dataset_len/simulation_freq #should be same parameter value like in matlab simulation
 
     # single_dataset_duration_sec = 230 #should be same parameter value like in matlab simulation
-    # simulation_single_dataset_len = single_dataset_duration_sec * simulation_freq
+    # single_dataset_len = single_dataset_duration_sec * simulation_freq
     data_path = config['data_path']
-    simulated_data_file_name = config['simulated_data_file_name']
+
+    if(config['test_type'] == 'simulated_data'):
+        file_name = config['simulated_data_file_name']
+        data_pd = pd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
+    elif(config['test_type'] == 'transformed_real_data'):
+        file_name = config['transformed_real_data_file_name']
+        data_pd = pd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
+    elif (config['test_type'] == 'simulated_imu_from_real_gt_data'):
+        file_name = config['simulated_imu_from_real_gt_data_file_name']
+        data_pd = pd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
+
+
     real_data_file_name = config['real_data_file_name']
     trained_model_base_path = config['trained_model_path']
-    window_sizes = [5]
+    window_sizes = config['window_sizes'] 
     #window_sizes = [5]
     batch_size = 32
-    validation_precentage = 20
     num_of_check_baseline_iterations = 1
 
     # Set the device
@@ -1418,7 +1447,7 @@ def main(config):
     rotation_matrix_ins_to_dvl = euler_angles_to_rotation_matrix(roll_gt_rads, pitch_gt_rads, yaw_gt_rads)
 
     # Read data from the .csv file
-    simulated_data_pd = pd.read_csv(os.path.join(data_path, f'{simulated_data_file_name}'), header=None)
+
 
     ##prepare real data dataset
     real_data_pd = pd.read_csv(os.path.join(data_path, f'{real_data_file_name}'), header=None)
@@ -1450,22 +1479,22 @@ def main(config):
     # real_data_gt_pd = pd.read_csv(os.path.join(data_path, f'{real_gt_file_name}',f'{real_data_trajectory_index}'), header=None)
 
     ### Prepare the full dataset
-    time = np.array(simulated_data_pd.iloc[:, 0].T)
-    #num_of_simulated_datasets = len(time) // simulation_single_dataset_len
-    v_imu_body_full = np.array(simulated_data_pd.iloc[:, 1:4].T)
-    v_dvl_full = np.array(simulated_data_pd.iloc[:, 4:7].T)
+    time = np.array(data_pd.iloc[:, 0].T)
+    #num_of_simulated_datasets = len(time) // single_dataset_len
+    v_imu_body_full = np.array(data_pd.iloc[:, 1:4].T)
+    v_dvl_full = np.array(data_pd.iloc[:, 4:7].T)
     v_dvl_body_full = np.dot(rotation_matrix_ins_to_dvl.T, v_dvl_full)
-    v_gt_body_full = np.array(simulated_data_pd.iloc[:, 7:10].T)
-    euler_body_dvl_full = np.array(simulated_data_pd.iloc[:, 16:19].T)
-    a_imu_body_full = np.array(simulated_data_pd.iloc[:, 19:22].T)
-    omega_imu_body_full = np.array(simulated_data_pd.iloc[:, 22:25].T)
-    omega_skew_imu_body_full = skew_symetric(omega_imu_body_full)
+    v_gt_body_full = np.array(data_pd.iloc[:, 16:19].T)
+    euler_body_dvl_full = np.array(data_pd.iloc[:, 7:10].T)
+    # a_imu_body_full = np.array(data_pd.iloc[:, 19:22].T)
+    # omega_imu_body_full = np.array(data_pd.iloc[:, 22:25].T)
+    # omega_skew_imu_body_full = skew_symetric(omega_imu_body_full)
 
 
     # for quaternion presentation
-    # euler_body_dvl_full = np.array(simulated_data_pd.iloc[:, 16:20].T)
-    # a_imu_body_full = np.array(simulated_data_pd.iloc[:, 20:23].T)
-    # omega_imu_body_full = np.array(simulated_data_pd.iloc[:, 23:26].T)
+    # euler_body_dvl_full = np.array(data_pd.iloc[:, 16:20].T)
+    # a_imu_body_full = np.array(data_pd.iloc[:, 20:23].T)
+    # omega_imu_body_full = np.array(data_pd.iloc[:, 23:26].T)
     # omega_skew_imu_body_full = skew_symetric(omega_imu_body_full)
 
     # split data into training and validation sets
@@ -1482,12 +1511,12 @@ def main(config):
     v_imu_dvl_test_real_data_list = []
 
     # Calculate number of sequences
-    num_of_simulated_datasets = len(simulated_data_pd) // simulation_single_dataset_len
+    num_of_simulated_datasets = len(data_pd) // single_dataset_len
 
     train_sequences, val_sequences, test_sequences = split_data_properly(
-        simulated_data_pd=simulated_data_pd,
+        data_pd=data_pd,
         num_sequences=num_of_simulated_datasets,
-        sequence_length=simulation_single_dataset_len,
+        sequence_length=single_dataset_len,
         train_size=0.6,
         val_size=0.2
     )
@@ -1499,21 +1528,21 @@ def main(config):
 
     # for i in range(0, index_of_split_series):
     #     v_imu_dvl_train_series_list.append(
-    #         [v_imu_body_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
-    #          v_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
-    #          euler_body_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T])
+    #         [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
     #
     # for i in range(index_of_split_series, num_of_simulated_datasets - 1):
     #     v_imu_dvl_valid_series_list.append(
-    #         [v_imu_body_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
-    #          v_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
-    #          euler_body_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T])
+    #         [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
     #
     # for i in range(num_of_simulated_datasets - 1, num_of_simulated_datasets):
     #     v_imu_dvl_test_series_list.append(
-    #         [v_imu_body_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
-    #          v_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T,
-    #          euler_body_dvl_full[:, i * simulation_single_dataset_len:i * simulation_single_dataset_len + simulation_single_dataset_len].T])
+    #         [v_imu_body_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          v_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T,
+    #          euler_body_dvl_full[:, i * single_dataset_len:i * single_dataset_len + single_dataset_len].T])
 
     v_imu_dvl_test_real_data_list.append(
         [v_imu_body_real_data_full.T, v_dvl_real_data_full.T, euler_body_dvl_real_data_full.T])
@@ -1521,7 +1550,7 @@ def main(config):
     ################################## train model with simulated data ##################################################
     if (config['train_model']):
         for i in window_sizes:
-            print('train with window of %d seconds', i)
+            print(f'train with window of {i} seconds')
             # Parameters
             window_size = i * simulation_freq
 
@@ -1577,7 +1606,7 @@ def main(config):
             # Save the model and store its path
             model_path = save_model(model, i, trained_model_base_path)
 
-    # Test model
+    ########## Test Model section #################
     if (config['test_model']):
         for window_size in window_sizes:
             print(f'\nEvaluating model with window size {window_size}')
@@ -1593,7 +1622,7 @@ def main(config):
             model.to(device)
             model.eval()
 
-            if (config['test_type'] == 'simulated_data'):
+            if ((config['test_type'] == 'simulated_data') or (config['test_type'] == 'transformed_real_data') or (config['test_type'] == 'simulated_imu_from_real_gt_data')):
                 # Create test loader for this window size
                 test_loader = windowed_dataset(
                     series_list=v_imu_dvl_test_series_list,
@@ -1629,61 +1658,32 @@ def main(config):
             #     f"Test RMSE (Roll, Pitch, Yaw): {test_rmse_components[0]:.4f}, {test_rmse_components[1]:.4f}, {test_rmse_components[2]:.4f}")
             print(f"Test Mean RMSE: {mean_rmse:.4f}")
 
-        # #### Plot test results
-        # # Create a new figure with 3 subplots (one for each axis)
-        # fig, (ax1, ax2, ax3, ax4) = plt.subplots(4, 1, figsize=(12, 15), sharex=True)
-        # # Set the color to purple for ax1, ax2, and ax3
-        # color = 'purple'
-        # # Plot rmse roll angle
-        # ax1.plot(current_time_test_list, rmse_roll_test_list, color=color)
-        # ax1.set_ylabel('Roll RMSE Test [deg]')
-        # ax1.legend()
-        # ax1.grid(True)
-        # # Plot rmse pitch angle
-        # ax2.plot(current_time_test_list, rmse_pitch_test_list, color=color)
-        # ax2.set_ylabel('Pitch RMSE Test [deg]')
-        # ax2.legend()
-        # ax2.grid(True)
-        # # Plot rmse yaw angle
-        # ax3.plot(current_time_test_list, rmse_yaw_test_list, color=color)
-        # ax3.set_ylabel('Yaw RMSE Test [deg]')
-        # ax3.legend()
-        # ax3.grid(True)
-        # # Plot rmse angle
-        # ax4.plot(current_time_test_list, rmse_test_list)
-        # ax4.set_ylabel('Total RMSE Test [deg]')
-        # ax4.set_xlabel('T [sec]')
-        # ax4.legend()
-        # ax4.grid(True)
-        # plt.tight_layout()
-        # plt.show(block=False)
 
-    ### Base Line Model
-    # Lists to store results
-    num_samples_baseline_list = []
-    rmse_svd_baseline_list = []
-    rmse_all_test_iterations_svd_baseline_list = [[] for _ in range(num_of_check_baseline_iterations)]
-    rmse_gd_baseline_list = []
-    rmse_baseline_centered_list = []
-    rmse_roll_baseline_list = []
-    rmse_pitch_baseline_list = []
-    rmse_yaw_baseline_list = []
-    rmse_gd_roll_baseline_list = []
-    rmse_gd_pitch_baseline_list = []
-    rmse_gd_yaw_baseline_list = []
-    squared_error_roll_baseline_list = []
-    squared_error_pitch_baseline_list = []
-    squared_error_yaw_baseline_list = []
-    squared_error_svd_baseline_list = []
-    squared_error_gd_baseline_list = []
-    squared_centered_error_baseline_list = []
-    current_time_baseline_list = []
-    #euler_angles_svd_degrees_list = []
-    euler_angles_gd_degrees_list = []
-    euler_angles_centered_degrees_list = []
-    euler_angles_svd_degrees_list = [[] for _ in range(simulation_single_dataset_len)]
-
+########## Test Baseline Model section #################
     if (config['test_baseline_model']):
+        # Lists to store results
+        num_samples_baseline_list = []
+        rmse_svd_baseline_list = []
+        rmse_all_test_iterations_svd_baseline_list = []
+        rmse_gd_baseline_list = []
+        rmse_baseline_centered_list = []
+        rmse_roll_baseline_list = []
+        rmse_pitch_baseline_list = []
+        rmse_yaw_baseline_list = []
+        rmse_gd_roll_baseline_list = []
+        rmse_gd_pitch_baseline_list = []
+        rmse_gd_yaw_baseline_list = []
+        squared_error_roll_baseline_list = []
+        squared_error_pitch_baseline_list = []
+        squared_error_yaw_baseline_list = []
+        squared_error_svd_baseline_list = []
+        squared_error_gd_baseline_list = []
+        squared_centered_error_baseline_list = []
+        current_time_baseline_list = []
+        # euler_angles_svd_degrees_list = []
+        euler_angles_gd_degrees_list = []
+        euler_angles_centered_degrees_list = []
+        euler_angles_svd_degrees_list = [[] for _ in range(single_dataset_len)]
 
         if (config['test_type'] == "real_data"):
 
@@ -1752,179 +1752,164 @@ def main(config):
                 # rmse_gd_pitch_baseline_list.append(rmse_svd_pitch)
                 # rmse_gd_yaw_baseline_list.append(rmse_svd_yaw)
 
-
-        elif (config['test_type'] == "simulated_data"):
-
-
-
-            # for dataset in v_imu_dvl_test_series_list:
+        elif((config['test_type'] == "simulated_data") or (config['test_type'] == "transformed_real_data") or (config['test_type'] == "simulated_imu_from_real_gt_data")):
+            # # Calculate number of sample points
+            # num_samples_range = range(10, single_dataset_len, 2)  # This will give us consistent lengths
             #
-            #     v_imu_dataset = torch.FloatTensor(dataset[0])
-            #     v_dvl_dataset = torch.FloatTensor(dataset[1])
-            #     euler_body_dvl_gt_dataset = torch.FloatTensor(dataset[2])
+            # # Initialize arrays to store all RMSE values across runs
+            # all_rmse_baseline = np.zeros((len(num_samples_range), num_of_check_baseline_iterations))
+            # all_rmse_roll_baseline = np.zeros((len(num_samples_range), num_of_check_baseline_iterations))
+            # all_rmse_pitch_baseline = np.zeros((len(num_samples_range), num_of_check_baseline_iterations))
+            # all_rmse_yaw_baseline = np.zeros((len(num_samples_range), num_of_check_baseline_iterations))
+            # current_time_baseline = []
+
+            # print(f"num_of_samples:{num_of_simulated_datasets}")
+
+
+            # print(f"curr_check_idx: {num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter}")
+
+            # Lists to store results
+            # num_samples_baseline_list = []
+            # rmse_svd_baseline_list = []
+            # rmse_gd_baseline_list = []
+            # rmse_baseline_centered_list = []
+            # rmse_roll_baseline_list = []
+            # rmse_pitch_baseline_list = []
+            # rmse_yaw_baseline_list = []
+            # rmse_gd_roll_baseline_list = []
+            # rmse_gd_pitch_baseline_list = []
+            # rmse_gd_yaw_baseline_list = []
+            # squared_error_roll_baseline_list = []
+            # squared_error_pitch_baseline_list = []
+            # squared_error_yaw_baseline_list = []
+            # squared_error_svd_baseline_list = []
+            # squared_error_gd_baseline_list = []
+            # squared_centered_error_baseline_list = []
+            # current_time_baseline_list = []
+            # euler_angles_svd_degrees_list = []
+            # euler_angles_gd_degrees_list = []
+            # euler_angles_centered_degrees_list = []
+
+            current_time_baseline_list.clear()
+
+            for num_samples in tqdm(range(2, single_dataset_len, 1)):  # should Start from 2
+
+                current_time = (num_samples / single_dataset_len) * single_dataset_duration_sec
+
+                # Sample the data
+                start_idx = (num_of_simulated_datasets - num_of_check_baseline_iterations) * single_dataset_len
+                v_imu_sampled = v_imu_body_full[:, start_idx:start_idx + num_samples]
+                v_dvl_sampled = v_dvl_full[:, start_idx:start_idx + num_samples]
+                #a_imu_sampled = a_imu_body_full[:, start_idx:start_idx + num_samples]
+                #omega_skew_imu_sampled = omega_skew_imu_body_full[:, :, start_idx:start_idx + num_samples]
+
+                v_imu_sampled_tran = v_imu_body_full.transpose()
+                v_dvl_sampled_tran = v_dvl_full.transpose()
+
+
+                euler_body_dvl_gt = euler_body_dvl_full[:, start_idx]
+
+                # Acceleration-based Method: Run Gradient Descent solution
+
+                if(num_samples == 100):
+                    print("bv")
+
+
+                # Velocity-based Method: Run SVD solution
+                euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled, v_dvl_sampled)
+                euler_angles_svd_degrees = np.degrees(euler_angles_svd_rads)
+                euler_angles_svd_degrees_list.append(euler_angles_svd_degrees)
+
+                # Acceleration-based Method: Run gradient descent solution
+                # euler_angles_gd_degrees = run_acc_gradient_descent(v_imu_sampled, v_dvl_sampled, omega_skew_imu_sampled, a_imu_sampled)
+                # euler_angles_gd_degrees_list.append(euler_angles_gd_degrees)
+
+                # # The paper shows better results when removing the mean (VEL-SVD-RMV)
+                # v_imu_centered = v_imu_sampled - np.mean(v_imu_sampled, axis=1, keepdims=True)
+                # v_dvl_centered = v_dvl_sampled - np.mean(v_dvl_sampled, axis=1, keepdims=True)
+                # euler_angles_centered_rads = run_svd_solution_for_wahba_problem(v_imu_centered, v_dvl_centered)
+                # euler_angles_centered_degrees = np.degrees(euler_angles_centered_rads)
+                # euler_angles_centered_degrees_list.append(euler_angles_centered_degrees)
+
+                squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees),euler_body_dvl_gt)
+
+                squared_error_svd_baseline_list.append(squared_error_svd_baseline)
+
+                # squared_error_gd_baseline = squared_angular_difference(np.array(euler_angles_gd_degrees),euler_body_dvl_gt)
+                # squared_error_gd_baseline_list.append(squared_error_gd_baseline)
+
+                # squared_centered_error_baseline = squared_angular_difference(
+                #     np.array(euler_angles_centered_degrees), euler_body_dvl_gt)
+                # squared_centered_error_baseline_list.append(
+                #     squared_angular_difference(np.array(euler_angles_centered_degrees), euler_body_dvl_gt))
+
+                # squared_error_roll_baseline = squared_angle_difference(euler_angles_svd_degrees[0],
+                #                                                        euler_body_dvl_gt[0])
+                # squared_error_roll_baseline_list.append(
+                #     squared_angle_difference(euler_angles_svd_degrees[0], euler_body_dvl_gt[0]))
+                #
+                # squared_error_pitch_baseline = squared_angle_difference(euler_angles_svd_degrees[1],
+                #                                                         euler_body_dvl_gt[1])
+                # squared_error_pitch_baseline_list.append(
+                #     squared_angle_difference(euler_angles_svd_degrees[1], euler_body_dvl_gt[1]))
+                #
+                # squared_error_yaw_baseline = squared_angle_difference(euler_angles_svd_degrees[2],
+                #                                                       euler_body_dvl_gt[2])
+                # squared_error_yaw_baseline_list.append(
+                #     squared_angle_difference(euler_angles_svd_degrees[2], euler_body_dvl_gt[2]))
+
+                # Calculate RMSE
+                rmse_svd = calculate_rmse(squared_error_svd_baseline)
+                # rmse_centered = calculate_rmse(squared_centered_error_baseline)
+                # rmse_svd_roll = calculate_rmse(squared_error_roll_baseline)
+                # rmse_svd_pitch = calculate_rmse(squared_error_pitch_baseline)
+                # rmse_svd_yaw = calculate_rmse(squared_error_yaw_baseline)
+
+                # rmse_gd = calculate_rmse(squared_error_gd_baseline)
+
+                # Store results
+                num_samples_baseline_list.append(num_samples)
+                current_time_baseline_list.append(current_time)
+                rmse_all_test_iterations_svd_baseline_list.append(rmse_svd)
+                # rmse_baseline_centered_list.append(rmse_centered)
+                # rmse_roll_baseline_list.append(rmse_svd_roll)
+                # rmse_pitch_baseline_list.append(rmse_svd_pitch)
+                # rmse_yaw_baseline_list.append(rmse_svd_yaw)
+
+                # # rmse_gd_baseline_list.append(rmse_gd)
+                # rmse_gd_roll_baseline_list.append(rmse_gd_roll)
+                # rmse_gd_pitch_baseline_list.append(rmse_gd_pitch)
+                # rmse_gd_yaw_baseline_list.append(rmse_gd_yaw)
+
+            plt.figure(figsize=(12, 8))
+            # Plot total RMSE for baseline and test
+            plt.plot(current_time_baseline_list, rmse_all_test_iterations_svd_baseline_list,
+                     label='Baseline', linewidth=2)
+
+            # Add labels and title
+            plt.xlabel('T [sec]', fontsize=16)
+            plt.ylabel('Alignment RMSE [deg]', fontsize=16)
+
+            # Add legend
+            plt.legend(fontsize=12)
+
+            # Adjust layout
+            plt.tight_layout()
+
+            # Show plot
+            plt.show(block=False)
+
+
+            # # Create a list to store the means
+            # rmse_mean_svd_baseline_list = []
             #
-            #     for num_samples in tqdm(range(2, simulation_single_dataset_len, 20)):  # should Start from 2, increment by 5
-            #         v_imu_sampled = v_imu_dataset[:, 0:num_samples]
-            #         v_dvl_sampled = v_dvl_dataset[:, 0:num_samples]
-            #
-            #         # Velocity-based Method: Run SVD solution
-            #         euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled, v_dvl_sampled)
-            #         euler_angles_svd_degrees = np.degrees(euler_angles_svd_rads)
-            #         euler_angles_svd_degrees_list[num_samples].append(euler_angles_svd_degrees)
+            # # Calculate mean for each position across all iterations
+            # for i in range(len(rmse_all_test_iterations_svd_baseline_list)):  # Assumes all sublists have same length
+            #     values_at_position = [iteration[i] for iteration in rmse_all_test_iterations_svd_baseline_list]
+            #     mean_at_position = np.mean(values_at_position)
+            #     rmse_mean_svd_baseline_list.append(mean_at_position)
 
-
-
-            # Calculate number of sample points
-            num_sample_points = (simulation_single_dataset_len - 10) // 10  # = 117 for simulation_single_dataset_len = 1170
-            num_samples_range = range(10, simulation_single_dataset_len, 2)  # This will give us consistent lengths
-
-            # Initialize arrays to store all RMSE values across runs
-            all_rmse_baseline = np.zeros((len(num_samples_range), num_of_check_baseline_iterations))
-            all_rmse_roll_baseline = np.zeros((len(num_samples_range), num_of_check_baseline_iterations))
-            all_rmse_pitch_baseline = np.zeros((len(num_samples_range), num_of_check_baseline_iterations))
-            all_rmse_yaw_baseline = np.zeros((len(num_samples_range), num_of_check_baseline_iterations))
-            current_time_baseline = []
-
-            print(f"num_of_samples:{num_of_simulated_datasets}")
-
-            for check_iter in range(num_of_check_baseline_iterations):
-
-
-                print(f"curr_check_idx: {num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter}")
-
-                # Lists to store results
-                # num_samples_baseline_list = []
-                # rmse_svd_baseline_list = []
-                # rmse_gd_baseline_list = []
-                # rmse_baseline_centered_list = []
-                # rmse_roll_baseline_list = []
-                # rmse_pitch_baseline_list = []
-                # rmse_yaw_baseline_list = []
-                # rmse_gd_roll_baseline_list = []
-                # rmse_gd_pitch_baseline_list = []
-                # rmse_gd_yaw_baseline_list = []
-                # squared_error_roll_baseline_list = []
-                # squared_error_pitch_baseline_list = []
-                # squared_error_yaw_baseline_list = []
-                # squared_error_svd_baseline_list = []
-                # squared_error_gd_baseline_list = []
-                # squared_centered_error_baseline_list = []
-                # current_time_baseline_list = []
-                # euler_angles_svd_degrees_list = []
-                # euler_angles_gd_degrees_list = []
-                # euler_angles_centered_degrees_list = []
-
-                current_time_baseline_list.clear()
-
-                for num_samples in tqdm(range(2, simulation_single_dataset_len, 1)):  # should Start from 2, increment by 5
-
-                    current_time = (num_samples / simulation_single_dataset_len) * single_dataset_duration_sec
-
-                    # Sample the data
-                    start_idx = (num_of_simulated_datasets - num_of_check_baseline_iterations + check_iter) * simulation_single_dataset_len
-                    v_imu_sampled = v_imu_body_full[:, start_idx:start_idx + num_samples]
-                    v_dvl_sampled = v_dvl_full[:, start_idx:start_idx + num_samples]
-                    a_imu_sampled = a_imu_body_full[:, start_idx:start_idx + num_samples]
-                    omega_skew_imu_sampled = omega_skew_imu_body_full[:, :, start_idx:start_idx + num_samples]
-
-                    euler_body_dvl_gt = euler_body_dvl_full[:, start_idx]
-
-                    # Acceleration-based Method: Run Gradient Descent solution
-
-                    # Velocity-based Method: Run SVD solution
-                    euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled, v_dvl_sampled)
-                    euler_angles_svd_degrees = np.degrees(euler_angles_svd_rads)
-                    euler_angles_svd_degrees_list.append(euler_angles_svd_degrees)
-
-                    # Acceleration-based Method: Run gradient descent solution
-                    # euler_angles_gd_degrees = run_acc_gradient_descent(v_imu_sampled, v_dvl_sampled, omega_skew_imu_sampled, a_imu_sampled)
-                    # euler_angles_gd_degrees_list.append(euler_angles_gd_degrees)
-
-                    # The paper shows better results when removing the mean (VEL-SVD-RMV)
-                    v_imu_centered = v_imu_sampled - np.mean(v_imu_sampled, axis=1, keepdims=True)
-                    v_dvl_centered = v_dvl_sampled - np.mean(v_dvl_sampled, axis=1, keepdims=True)
-                    euler_angles_centered_rads = run_svd_solution_for_wahba_problem(v_imu_centered, v_dvl_centered)
-                    euler_angles_centered_degrees = np.degrees(euler_angles_centered_rads)
-                    euler_angles_centered_degrees_list.append(euler_angles_centered_degrees)
-
-                    squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees),
-                                                                            euler_body_dvl_gt)
-                    squared_error_svd_baseline_list.append(squared_error_svd_baseline)
-
-                    # squared_error_gd_baseline = squared_angular_difference(np.array(euler_angles_gd_degrees),euler_body_dvl_gt)
-                    # squared_error_gd_baseline_list.append(squared_error_gd_baseline)
-
-                    squared_centered_error_baseline = squared_angular_difference(
-                        np.array(euler_angles_centered_degrees), euler_body_dvl_gt)
-                    squared_centered_error_baseline_list.append(
-                        squared_angular_difference(np.array(euler_angles_centered_degrees), euler_body_dvl_gt))
-
-                    squared_error_roll_baseline = squared_angle_difference(euler_angles_svd_degrees[0],
-                                                                           euler_body_dvl_gt[0])
-                    squared_error_roll_baseline_list.append(
-                        squared_angle_difference(euler_angles_svd_degrees[0], euler_body_dvl_gt[0]))
-
-                    squared_error_pitch_baseline = squared_angle_difference(euler_angles_svd_degrees[1],
-                                                                            euler_body_dvl_gt[1])
-                    squared_error_pitch_baseline_list.append(
-                        squared_angle_difference(euler_angles_svd_degrees[1], euler_body_dvl_gt[1]))
-
-                    squared_error_yaw_baseline = squared_angle_difference(euler_angles_svd_degrees[2],
-                                                                          euler_body_dvl_gt[2])
-                    squared_error_yaw_baseline_list.append(
-                        squared_angle_difference(euler_angles_svd_degrees[2], euler_body_dvl_gt[2]))
-
-                    # Calculate RMSE
-                    rmse_svd = calculate_rmse(squared_error_svd_baseline)
-                    rmse_centered = calculate_rmse(squared_centered_error_baseline)
-                    rmse_svd_roll = calculate_rmse(squared_error_roll_baseline)
-                    rmse_svd_pitch = calculate_rmse(squared_error_pitch_baseline)
-                    rmse_svd_yaw = calculate_rmse(squared_error_yaw_baseline)
-
-                    # rmse_gd = calculate_rmse(squared_error_gd_baseline)
-
-                    # Store results
-                    num_samples_baseline_list.append(num_samples)
-                    current_time_baseline_list.append(current_time)
-                    rmse_all_test_iterations_svd_baseline_list[check_iter].append(rmse_svd)
-                    rmse_baseline_centered_list.append(rmse_centered)
-                    rmse_roll_baseline_list.append(rmse_svd_roll)
-                    rmse_pitch_baseline_list.append(rmse_svd_pitch)
-                    rmse_yaw_baseline_list.append(rmse_svd_yaw)
-
-                    # # rmse_gd_baseline_list.append(rmse_gd)
-                    # rmse_gd_roll_baseline_list.append(rmse_gd_roll)
-                    # rmse_gd_pitch_baseline_list.append(rmse_gd_pitch)
-                    # rmse_gd_yaw_baseline_list.append(rmse_gd_yaw)
-
-                plt.figure(figsize=(12, 8))
-                # Plot total RMSE for baseline and test
-                plt.plot(current_time_baseline_list, rmse_all_test_iterations_svd_baseline_list[check_iter],
-                         label='Baseline', linewidth=2)
-
-                # Add labels and title
-                plt.xlabel('T [sec]', fontsize=16)
-                plt.ylabel('Alignment RMSE [deg]', fontsize=16)
-
-                # Add legend
-                plt.legend(fontsize=12)
-
-                # Adjust layout
-                plt.tight_layout()
-
-                # Show plot
-                plt.show(block=False)
-
-            # Create a list to store the means
-            rmse_mean_svd_baseline_list = []
-
-            # Calculate mean for each position across all iterations
-            for i in range(len(rmse_all_test_iterations_svd_baseline_list[0])):  # Assumes all sublists have same length
-                values_at_position = [iteration[i] for iteration in rmse_all_test_iterations_svd_baseline_list]
-                mean_at_position = np.mean(values_at_position)
-                rmse_mean_svd_baseline_list.append(mean_at_position)
-
-            rmse_svd_baseline_list = rmse_all_test_iterations_svd_baseline_list[-1]
+            rmse_svd_baseline_list = rmse_all_test_iterations_svd_baseline_list
 
             ####RMSE
 
@@ -2061,20 +2046,27 @@ if __name__ == '__main__':
         'roll_gt_deg': -179.9,
         'pitch_gt_deg': 0.2,
         'yaw_gt_deg': -44.3,
+        #'window_sizes': [100],
+        #'window_sizes': [25, 50, 75, 100, 125, 150],
+        'window_sizes': [5],
+        'simulated_dataset_len': 1170,
+        'real_dataset_len': 400,
+        'simulated_dataset_duration_sec': 230,
+        'real_dataset_duration_sec': 400,
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
-        'test_type': 'real_data',  # Set to "real_data" or "simulated_data"
-        'train_model': False,  # Set to False to use the saved trained model
+        'test_type': 'simulated_imu_from_real_gt_data',  # Set to "real_data" or "simulated_data" or "transformed_real_data" or "simulated_imu_from_real_gt_data"
+        'train_model': False ,  # Set to False to use the saved trained model
         'test_model': True,
         'test_baseline_model': True,
         'check_data': False,
-        'simulated_data_file_name': 'simulated_data_output.csv',
         'trained_model_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work\\trained_model",
-        #'real_data_file_name': 'real_data_output.csv',
-        'real_data_file_name': 'transformed_real_data_output.csv',
+        'simulated_data_file_name': 'simulated_data_output.csv',
+        'real_data_file_name': 'real_data_output.csv',
+        'transformed_real_data_file_name': 'transformed_real_data_output.csv',
+        'simulated_imu_from_real_gt_data_file_name': 'simulated_imu_from_real_gt_data_output.csv',
         'real_imu_file_name': 'IMU_trajectory.csv',
         'real_dvl_file_name': 'DVL_trajectory.csv',
         'real_gt_file_name': 'GT_trajectory.csv'
-
     }
 
     # orzi_euler_config = {
