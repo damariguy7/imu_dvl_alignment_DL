@@ -448,15 +448,6 @@ class Resnet1chDnet(nn.Module):
 
 
 
-
-
-
-
-
-
-
-
-
 # Define the CNN model
 class IMUDVLCNN(nn.Module):
     def __init__(self, dropout_rate=0.2):  # Reduced dropout rate
@@ -835,12 +826,61 @@ def single_quaternion_to_euler(q):
     return roll_deg, pitch_deg, yaw_deg
 
 
+
+
+
+
+    #
+    # for test_idx, test_sequence in enumerate(v_imu_dvl_test_series_list):
+    #     v_imu_seq = test_sequence[0]
+    #     v_dvl_seq = test_sequence[1]
+    #     eul_body_dvl_gt_seq = test_sequence[2]
+    #     dataset_len = len(v_imu_seq)
+    #
+    #     rmse_svd_degrees_per_num_samples_list = []
+    #
+    #     for num_samples in range(start_num_of_samples, dataset_len, num_of_samples_slot):  # should Start from 2
+    #         v_imu_sampled = v_imu_seq[0:num_samples, :]
+    #         v_dvl_sampled = v_dvl_seq[0:num_samples, :]
+    #         euler_body_dvl_gt = eul_body_dvl_gt_seq[0, :]
+    #
+    #         euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled.T, v_dvl_sampled.T)
+    #         euler_angles_svd_degrees = np.degrees(euler_angles_svd_rads)
+    #
+    #         squared_error_svd_baseline = rmse_angle(np.array(euler_angles_svd_degrees),
+    #                                                                 euler_body_dvl_gt)
+    #
+    #         rmse_angles_svd = np.sqrt(squared_error_svd_baseline)
+    #
+    #         rmse_svd_degrees_per_num_samples_list.append(rmse_angles_svd)
+    #
+    #         rmse_svd_across_all_samples = np.sqrt(np.mean(rmse_svd_degrees_per_num_samples_list))
+    #
+    #         # Store in dictionary
+    #         if num_samples not in rmse_svd_all_tests_by_num_of_samples_dict:
+    #             rmse_svd_all_tests_by_num_of_samples_dict[num_samples] = []
+    #
+    #         rmse_svd_all_tests_by_num_of_samples_dict[num_samples].append(rmse_svd_across_all_samples)
+    #
+    # mean_rmse_svd_degrees_per_num_samples_list = []
+    #
+    # for num_samples in range(start_num_of_samples, dataset_len, num_of_samples_slot):
+    #     mean_euler_angles_svd_per_num_samples = np.mean(rmse_svd_all_tests_by_num_of_samples_dict[num_samples])
+    #     mean_rmse_svd_degrees_per_num_samples_list.append(mean_euler_angles_svd_per_num_samples)
+    #
+    # svd_time_list = list(range(0, 323))
+    #
+    # return mean_rmse_svd_degrees_per_num_samples_list, svd_time_list
+
+
+
+
 def evaluate_model(model, test_loader, device):
     model.eval()
     total_loss = 0.0
     all_predictions = []
     all_targets = []
-    rmse_list = []
+    mse_angle_list = []
 
     # Lists to store per-dataset metrics
     dataset_rmse_lists = []
@@ -861,36 +901,45 @@ def evaluate_model(model, test_loader, device):
 
             # Calculate per-batch metrics
             for ii in range(len(targets)):
-                squared_err = squared_angular_difference(targets[ii].cpu().numpy(), outputs[ii].cpu().numpy())
-                rmse = calculate_rmse(squared_err)
-                rmse_list.append(rmse)
+                mse_angle = calc_mse_angles(targets[ii].cpu().numpy(), outputs[ii].cpu().numpy())
 
-            # Check if we've completed a dataset
-            if batch_count * samples_per_dataset >= len(test_loader.dataset):
-                # Calculate dataset-level metrics
-                dataset_predictions = np.array(current_dataset_predictions)
-                dataset_targets = np.array(current_dataset_targets)
+                mse_angle_list.append(mse_angle)
 
-                # Calculate RMSE components for this dataset
-                rmse_components = np.sqrt(np.mean((dataset_predictions - dataset_targets) ** 2, axis=0))
-                dataset_rmse_lists.append(rmse_components)
+                #         rmse_angles_svd = np.sqrt(squared_error_svd_baseline)
+                #
+                #         rmse_svd_degrees_per_num_samples_list.append(rmse_angles_svd)
+                #
+                #         rmse_svd_across_all_samples = np.sqrt(np.mean(rmse_svd_degrees_per_num_samples_list))
 
-                # Reset for next dataset
-                current_dataset_predictions = []
-                current_dataset_targets = []
-                batch_count = 0
 
-            # Calculate loss
-            criterion = nn.CosineSimilarity()
-            loss = torch.mean(torch.abs(criterion(targets, outputs)))
-            loss = 1 - loss
-            total_loss += loss.item()
+
+
+            # # Check if we've completed a dataset
+            # if batch_count * samples_per_dataset >= len(test_loader.dataset):
+            #     # Calculate dataset-level metrics
+            #     dataset_predictions = np.array(current_dataset_predictions)
+            #     dataset_targets = np.array(current_dataset_targets)
+            #
+            #     # Calculate RMSE components for this dataset
+            #     rmse_components = np.sqrt(np.mean((dataset_predictions - dataset_targets) ** 2, axis=0))
+            #     dataset_rmse_lists.append(rmse_components)
+            #
+            #     # Reset for next dataset
+            #     current_dataset_predictions = []
+            #     current_dataset_targets = []
+            #     batch_count = 0
+
+            # # Calculate loss
+            # criterion = nn.CosineSimilarity()
+            # loss = torch.mean(torch.abs(criterion(targets, outputs)))
+            # loss = 1 - loss
+            # total_loss += loss.item()
 
             all_predictions.append(outputs.cpu().numpy())
             all_targets.append(targets.cpu().numpy())
 
     # Calculate overall metrics
-    avg_loss = total_loss / len(test_loader)
+    # avg_loss = total_loss / len(test_loader)
     all_predictions = np.concatenate(all_predictions)
     all_targets = np.concatenate(all_targets)
 
@@ -901,15 +950,15 @@ def evaluate_model(model, test_loader, device):
     total_rmse = np.sqrt(np.mean((all_predictions - all_targets) ** 2))
 
     # Calculate mean RMSE across all samples
-    mean_rmse = np.mean(rmse_list)
+    rmse = np.sqrt(np.mean(mse_angle_list))
 
-    # Calculate mean RMSE components across datasets
-    if dataset_rmse_lists:
-        mean_dataset_rmse = np.mean(dataset_rmse_lists, axis=0)
-    else:
-        mean_dataset_rmse = rmse_components
+    # # Calculate mean RMSE components across datasets
+    # if dataset_rmse_lists:
+    #     mean_dataset_rmse = np.mean(dataset_rmse_lists, axis=0)
+    # else:
+    #     mean_dataset_rmse = rmse_components
 
-    return mean_rmse, avg_loss, mean_dataset_rmse, total_rmse
+    return rmse
 
 
 class IMUDVLWindowedDataset(Dataset):
@@ -972,7 +1021,7 @@ def windowed_dataset(series_list, window_size, batch_size, shuffle):
     return dataloader
 
 
-def save_model(model, window_size, base_path="models"):
+def save_model(model, test_type, window_size, base_path="models"):
     """
     Save the trained model to a file with window size in the filename.
 
@@ -986,7 +1035,7 @@ def save_model(model, window_size, base_path="models"):
     # os.makedirs(base_path, exist_ok=True)
 
     # Create filename with window size
-    filepath = os.path.join(base_path, f'imu_dvl_model_window_{window_size}.pth')
+    filepath = os.path.join(base_path, f'imu_dvl_model_{test_type}_window_{window_size}.pth')
 
     # Save the model
     torch.save(model.state_dict(), filepath)
@@ -1165,7 +1214,7 @@ def run_acc_gradient_descent(v_imu, v_dvl, omega_skew_imu, a_imu, max_iterations
     return euler_angles_deg
 
 
-def squared_angular_difference(a, b):
+def calc_mse_angles(a, b):
     squared_diff = np.zeros(3)
 
     for i in range(3):
@@ -1181,10 +1230,13 @@ def squared_angular_difference(a, b):
             diff = 360 - diff
 
         squared_diff[i] = diff ** 2
+        # mean_squared_diff[i] = np.mean(squared_diff[i])
 
-    sum_diff = np.mean(squared_diff)
+    mean_squared_err = np.mean(squared_diff)
 
-    return sum_diff
+    # rmse = np.sqrt(mean_squared_err)
+
+    return mean_squared_err
 
 
 def squared_angle_difference(a, b):
@@ -1241,10 +1293,6 @@ def calculate_rmse(squared_error):
     # result = np.sqrt(np.sum((gt - estimated) ** 2))
     # print(result)
     # return np.sqrt(np.sum((gt - estimated) ** 2))
-
-    checj_it = np.sqrt(np.mean(squared_error))
-
-    cg = np.sqrt(squared_error)
 
     return np.sqrt(squared_error)
 
@@ -1314,11 +1362,11 @@ def rotation_matrix_to_euler_zyx(R):
 
 def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list):
 
-    start_num_of_samples = 1
-    num_of_samples_slot = 50
+    start_num_of_samples = 0
+    num_of_samples_slot = 5*30
 
     rmse_svd_all_tests_by_num_of_samples_dict = {}
-    svd_time_list = []
+
 
 
     for test_idx, test_sequence in enumerate(v_imu_dvl_test_series_list):
@@ -1327,8 +1375,9 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list):
         eul_body_dvl_gt_seq = test_sequence[2]
         dataset_len = len(v_imu_seq)
 
+        rmse_svd_degrees_per_num_samples_list = []
 
-        for num_samples in range(start_num_of_samples, dataset_len, num_of_samples_slot):  # should Start from 2
+        for num_samples in range(start_num_of_samples, dataset_len, num_of_samples_slot):
             v_imu_sampled = v_imu_seq[0:num_samples, :]
             v_dvl_sampled = v_dvl_seq[0:num_samples, :]
             euler_body_dvl_gt = eul_body_dvl_gt_seq[0, :]
@@ -1336,27 +1385,36 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list):
             euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled.T, v_dvl_sampled.T)
             euler_angles_svd_degrees = np.degrees(euler_angles_svd_rads)
 
-            squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees),
+            mse_angles = calc_mse_angles(np.array(euler_angles_svd_degrees),
                                                                     euler_body_dvl_gt)
 
-            rmse_svd = calculate_rmse(squared_error_svd_baseline)
+
+            # rmse_angles_svd = np.sqrt(squared_error_svd_baseline)
+
+            # rmse_svd_degrees_per_num_samples_list.append(rmse_angles_svd)
+            #
+            # rmse_svd_across_all_samples = np.sqrt(np.mean(rmse_svd_degrees_per_num_samples_list))
 
             # Store in dictionary
             if num_samples not in rmse_svd_all_tests_by_num_of_samples_dict:
                 rmse_svd_all_tests_by_num_of_samples_dict[num_samples] = []
-            rmse_svd_all_tests_by_num_of_samples_dict[num_samples].append(rmse_svd)
+
+            rmse_svd_all_tests_by_num_of_samples_dict[num_samples].append(mse_angles)
 
     mean_rmse_svd_degrees_per_num_samples_list = []
+
     for num_samples in range(start_num_of_samples, dataset_len, num_of_samples_slot):
         mean_euler_angles_svd_per_num_samples = np.mean(rmse_svd_all_tests_by_num_of_samples_dict[num_samples])
-        mean_rmse_svd_degrees_per_num_samples_list.append(mean_euler_angles_svd_per_num_samples)
+        mean_rmse_svd_degrees_per_num_samples_list.append(np.sqrt(mean_euler_angles_svd_per_num_samples))
 
-    svd_time_list = list(range(start_num_of_samples, dataset_len, num_of_samples_slot))
+    #svd_time_list = list(range(0, dataset_len-start_num_of_samples))
+    svd_time_list = list(range(start_num_of_samples//5, (dataset_len)//5 + 1, num_of_samples_slot//5))
 
     return mean_rmse_svd_degrees_per_num_samples_list, svd_time_list
 
-def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list, current_time_test_list, rmse_test_list) :
-    ######### Complete results graph
+
+def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list,
+                                             current_time_test_list, rmse_test_list):
     # Create a single figure for total RMSE plot
     plt.figure(figsize=(12, 8))
 
@@ -1366,13 +1424,18 @@ def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degree
 
     # Plot total RMSE for baseline and test
     plt.plot(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list, color=baseline_color, linestyle='-',
-             label='Baseline',
-             linewidth=2)
+             label='Baseline', linewidth=2)
     plt.scatter(current_time_test_list, rmse_test_list, color=test_color, marker='o', label='AligNet', s=100)
 
-    # Create combined tick marks for both small and large intervals
+    # Create tick marks that align with both datasets
+    # First, ensure we have the key points for small intervals
     small_intervals = np.array([25, 50, 100])
-    large_intervals = np.arange(0, 201, 50)  # 0 to 200 in steps of 50
+
+    # Then create regularly spaced large intervals
+    max_time = max(max(svd_time_list), max(current_time_test_list))
+    large_intervals = np.arange(0, max_time, 50)  # 0 to max_time in steps of 50
+
+    # Combine and ensure all ticks are unique and sorted
     all_ticks = np.unique(np.concatenate([small_intervals, large_intervals]))
 
     # Set x-axis ticks
@@ -1382,10 +1445,10 @@ def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degree
     plt.xlabel('T [sec]', fontsize=20)
     plt.ylabel('Alignment RMSE [deg]', fontsize=20)
 
-    # Add primary grid (solid lines for 50-second intervals)
+    # Add primary grid - make sure grid aligns with actual ticks
     plt.grid(True, which='major', linestyle='-', alpha=0.5)
 
-    # Add secondary grid (dotted lines for 5-second intervals)
+    # Add special grid lines for important intervals
     for x in small_intervals:
         plt.axvline(x=x, color='gray', linestyle=':', alpha=0.5)
 
@@ -1397,7 +1460,6 @@ def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degree
 
     # Show plot
     plt.show(block=False)
-
 
 def split_data_properly(data_pd, num_sequences, sequence_length, train_size=0.6, val_size=0.2):
     # Create sequence indices
@@ -1472,28 +1534,28 @@ def main(config):
     pitch_gt_deg = config['pitch_gt_deg']
     yaw_gt_deg = config['yaw_gt_deg']
 
-    simulation_freq = 1
-    single_dataset_duration_sec = None  # should be same parameter value like in matlab simulation
-    single_dataset_len = None
+    sample_freq = None
+    single_dataset_duration_sec = None # should be same parameter value like in matlab simulation
+    single_dataset_len = None # should be same parameter value like in matlab simulation
 
     if(config['test_type'] == 'simulated_data'):
         single_dataset_len = config['simulated_dataset_len']
-        single_dataset_duration_sec = config['simulated_dataset_duration_sec']
-        simulation_freq = 5
+        # single_dataset_duration_sec = config['simulated_dataset_duration_sec']
+        sample_freq = 5
     elif((config['test_type'] == 'transformed_real_data') or (config['test_type'] == 'simulated_imu_from_real_gt_data')):
         single_dataset_len = config['real_dataset_len']
-        single_dataset_duration_sec = config['real_dataset_duration_sec']
-        simulation_freq = 1
+        # single_dataset_duration_sec = config['real_dataset_duration_sec']
+        sample_freq = 1
 
     #real_single_dataset_len = 400
     #single_dataset_len = 1612
-    #single_dataset_len = single_dataset_duration_sec * simulation_freq
+    #single_dataset_len = single_dataset_duration_sec * sample_freq
 
     # single_dataset_len = 1612
-    # single_dataset_duration_sec = single_dataset_len/simulation_freq #should be same parameter value like in matlab simulation
+    # single_dataset_duration_sec = single_dataset_len/sample_freq #should be same parameter value like in matlab simulation
 
     # single_dataset_duration_sec = 230 #should be same parameter value like in matlab simulation
-    # single_dataset_len = single_dataset_duration_sec * simulation_freq
+    # single_dataset_len = single_dataset_duration_sec * sample_freq
     data_path = config['data_path']
 
     if(config['test_type'] == 'simulated_data'):
@@ -1511,10 +1573,9 @@ def main(config):
 
     real_data_file_name = config['real_data_file_name']
     trained_model_base_path = config['trained_model_path']
-    window_sizes = config['window_sizes'] 
-    #window_sizes = [5]
-    batch_size = 32
-    num_of_check_baseline_iterations = 1
+    window_sizes_sec = config['window_sizes_sec']
+    batch_size = config['batch_size']
+
 
     # Set the device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -1531,11 +1592,8 @@ def main(config):
     ##prepare real data dataset
     real_data_pd = pd.read_csv(os.path.join(data_path, f'{real_data_file_name}'), header=None)
     v_imu_body_real_data_full = np.array(real_data_pd.iloc[:, 1:4].T)
-    # v_imu_body_real_data_full = v_imu_body_real_data_full[:, 150:300]
     v_dvl_real_data_full = np.array(real_data_pd.iloc[:, 4:7].T)
-    # v_dvl_real_data_full = v_dvl_real_data_full[:, 150:300]
     euler_body_dvl_real_data_full = np.array(real_data_pd.iloc[:, 7:10].T)
-    # euler_body_dvl_real_data_full = euler_body_dvl_real_data_full[:, 150:300]
     real_dataset_len = len(v_imu_body_real_data_full[1])
 
     # ##prepare real data dataset
@@ -1645,25 +1703,25 @@ def main(config):
     v_imu_dvl_test_real_data_list.append(
         [v_imu_body_real_data_full.T, v_dvl_real_data_full.T, euler_body_dvl_real_data_full.T])
 
-    ################################## train model with simulated data ##################################################
-    if (config['train_model']):
-        for i in window_sizes:
+    ################################## train model ##################################################
+    if(config['train_model']):
+        for i in window_sizes_sec:
             print(f'train with window of {i} seconds')
             # Parameters
-            window_size = i * simulation_freq
+            num_of_samples_window_size = i * sample_freq
 
             train_loader = windowed_dataset(
                 series_list=v_imu_dvl_train_series_list,
-                window_size=window_size,
+                window_size=num_of_samples_window_size,
                 batch_size=batch_size,
                 shuffle=True
             )
 
             val_loader = windowed_dataset(
                 series_list=v_imu_dvl_valid_series_list,
-                window_size=window_size,
+                window_size=num_of_samples_window_size,
                 batch_size=batch_size,
-                shuffle=False
+                shuffle=True
             )
 
             ## start of CNN ########################################################################
@@ -1677,7 +1735,7 @@ def main(config):
 
             # Optimizer with weight decay (L2 regularization)
 
-            optimizer = optim.Adam(model.parameters(), lr=0.0001, weight_decay=0.01)
+            optimizer = optim.Adam(model.parameters(), lr=0.0000001, weight_decay=0.01)
 
             #
             # Learning rate scheduler
@@ -1685,7 +1743,7 @@ def main(config):
                 optimizer,
                 mode='min',
                 factor=0.5,
-                patience=4,
+                patience=0,
                 verbose=True
             )
 
@@ -1702,15 +1760,17 @@ def main(config):
             )
 
             # Save the model and store its path
-            model_path = save_model(model, i, trained_model_base_path)
+            model_path = save_model(model, config['test_type'], i, trained_model_base_path)
 
     ########## Test Model section #################
     if(config['test_model']):
-        for window_size in window_sizes:
+        for window_size in window_sizes_sec:
             print(f'\nEvaluating model with window size {window_size}')
 
             # Construct the specific model path for this window size
-            model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_window_{window_size}.pth')
+            test_type = config['test_type']
+            model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_{test_type}_window_{window_size}.pth')
+            #model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_window_{window_size}.pth')
 
             # Load model
             #model = SimplerIMUResNet(dropout_rate=0.3)
@@ -1726,7 +1786,7 @@ def main(config):
                     series_list=v_imu_dvl_test_series_list,
                     window_size=window_size,
                     batch_size=batch_size,
-                    shuffle=False
+                    shuffle=True
                 )
 
             elif(config['test_type'] == 'real_data'):
@@ -1735,25 +1795,22 @@ def main(config):
                     series_list=v_imu_dvl_test_real_data_list,
                     window_size=window_size,
                     batch_size=batch_size,
-                    shuffle=False
+                    shuffle=True
                 )
 
             # Evaluate model
-            mean_rmse, test_loss, test_rmse_components, test_total_rmse = evaluate_model(
+            rmse = evaluate_model(
                 model, test_loader, device
             )
 
-            rmse_test_list.append(mean_rmse)
-            rmse_roll_test_list.append(test_rmse_components[0])
-            rmse_pitch_test_list.append(test_rmse_components[1])
-            rmse_yaw_test_list.append(test_rmse_components[2])
-            current_time = (window_size / real_dataset_len) * real_dataset_len
+            rmse_test_list.append(rmse)
+            current_time = window_size
             current_time_test_list.append(current_time)
 
             # print(f"Test Loss: {test_loss:.4f}")
             # print(
             #     f"Test RMSE (Roll, Pitch, Yaw): {test_rmse_components[0]:.4f}, {test_rmse_components[1]:.4f}, {test_rmse_components[2]:.4f}")
-            print(f"Test Mean RMSE: {mean_rmse:.4f}")
+            print(f"Test RMSE: {rmse:.4f}")
 
 
 ########## Test Baseline Model section #################
@@ -1805,33 +1862,17 @@ def main(config):
                 #                                                    a_imu_sampled)
                 # euler_angles_gd_degrees_list.append(euler_angles_gd_degrees)
 
-                squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees),
+                squared_error_svd_baseline = calc_mse_angles(np.array(euler_angles_svd_degrees),
                                                                         euler_body_dvl_gt)
                 squared_error_svd_baseline_list.append(squared_error_svd_baseline)
 
-                # squared_error_gd_baseline = squared_angular_difference(np.array(euler_angles_gd_degrees),
+                # squared_error_gd_baseline = rmse_angle(np.array(euler_angles_gd_degrees),
                 #                                                        euler_body_dvl_gt)
                 # squared_error_gd_baseline_list.append(squared_error_gd_baseline)
 
-                squared_error_roll_baseline = squared_angle_difference(euler_angles_svd_degrees[0],
-                                                                       euler_body_dvl_gt[0])
-                squared_error_roll_baseline_list.append(
-                    squared_angle_difference(euler_angles_svd_degrees[0], euler_body_dvl_gt[0]))
-
-                squared_error_pitch_baseline = squared_angle_difference(euler_angles_svd_degrees[1],
-                                                                        euler_body_dvl_gt[1])
-                squared_error_pitch_baseline_list.append(
-                    squared_angle_difference(euler_angles_svd_degrees[1], euler_body_dvl_gt[1]))
-
-                squared_error_yaw_baseline = squared_angle_difference(euler_angles_svd_degrees[2], euler_body_dvl_gt[2])
-                squared_error_yaw_baseline_list.append(
-                    squared_angle_difference(euler_angles_svd_degrees[2], euler_body_dvl_gt[2]))
 
                 # Calculate RMSE
                 rmse_svd = calculate_rmse(squared_error_svd_baseline)
-                rmse_svd_roll = calculate_rmse(squared_error_roll_baseline)
-                rmse_svd_pitch = calculate_rmse(squared_error_pitch_baseline)
-                rmse_svd_yaw = calculate_rmse(squared_error_yaw_baseline)
 
                 # rmse_gd = calculate_rmse(squared_error_gd_baseline)
 
@@ -1840,9 +1881,7 @@ def main(config):
                 current_time_baseline_list.append(current_time)
                 rmse_svd_baseline_list.append(rmse_svd)
                 # rmse_baseline_centered_list.append(rmse_centered)
-                rmse_roll_baseline_list.append(rmse_svd_roll)
-                rmse_pitch_baseline_list.append(rmse_svd_pitch)
-                rmse_yaw_baseline_list.append(rmse_svd_yaw)
+
 
                 # rmse_gd_baseline_list.append(rmse_gd)
                 # rmse_gd_roll_baseline_list.append(rmse_svd_roll)
@@ -1910,9 +1949,9 @@ def main(config):
 
             mean_rmse_svd_degrees_per_num_samples_list, svd_time_list = calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list)
 
-            if(config['test_type'] == "transformed_real_data") :
-                sim_from_real_mean_rmse_svd_degrees_per_num_samples_list, sim_from_real_svd_time_list = calc_mean_rmse_svd_degrees_per_num_samples(
-                    v_imu_dvl_test_series_simulated_from_real_gt_list)
+            # if(config['test_type'] == "transformed_real_data") :
+            #     sim_from_real_mean_rmse_svd_degrees_per_num_samples_list, sim_from_real_svd_time_list = calc_mean_rmse_svd_degrees_per_num_samples(
+            #         v_imu_dvl_test_series_simulated_from_real_gt_list)
 
                 # # Velocity-based Method: Run SVD solution
                 # euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled, v_dvl_sampled)
@@ -1930,17 +1969,17 @@ def main(config):
                 # # euler_angles_centered_degrees = np.degrees(euler_angles_centered_rads)
                 # # euler_angles_centered_degrees_list.append(euler_angles_centered_degrees)
                 #
-                # squared_error_svd_baseline = squared_angular_difference(np.array(euler_angles_svd_degrees),euler_body_dvl_gt)
+                # squared_error_svd_baseline = rmse_angle(np.array(euler_angles_svd_degrees),euler_body_dvl_gt)
                 #
                 # squared_error_svd_baseline_list.append(squared_error_svd_baseline)
                 #
-                # # squared_error_gd_baseline = squared_angular_difference(np.array(euler_angles_gd_degrees),euler_body_dvl_gt)
+                # # squared_error_gd_baseline = rmse_angle(np.array(euler_angles_gd_degrees),euler_body_dvl_gt)
                 # # squared_error_gd_baseline_list.append(squared_error_gd_baseline)
                 #
-                # # squared_centered_error_baseline = squared_angular_difference(
+                # # squared_centered_error_baseline = rmse_angle(
                 # #     np.array(euler_angles_centered_degrees), euler_body_dvl_gt)
                 # # squared_centered_error_baseline_list.append(
-                # #     squared_angular_difference(np.array(euler_angles_centered_degrees), euler_body_dvl_gt))
+                # #     rmse_angle(np.array(euler_angles_centered_degrees), euler_body_dvl_gt))
                 #
                 # # squared_error_roll_baseline = squared_angle_difference(euler_angles_svd_degrees[0],
                 # #                                                        euler_body_dvl_gt[0])
@@ -2071,10 +2110,6 @@ def main(config):
         #
 
         plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list, current_time_test_list, rmse_test_list)
-        if(config['test_type'] == "transformed_real_data"):
-            plot_results_graph_rmse_net_and_rmse_svd(sim_from_real_svd_time_list, sim_from_real_mean_rmse_svd_degrees_per_num_samples_list,
-                                                 current_time_test_list, rmse_test_list)
-
 
 
 
@@ -2091,15 +2126,18 @@ if __name__ == '__main__':
         'roll_gt_deg': -179.9,
         'pitch_gt_deg': 0.2,
         'yaw_gt_deg': -44.3,
-        #'window_sizes': [100],
-        'window_sizes': [5, 25, 50, 75, 100, 125, 150, 175, 200],
-        #'window_sizes': [5],
-        'simulated_dataset_len': 1170,
+        #'window_sizes_sec': [100],
+        #'window_sizes_sec': [25, 50, 75, 100, 125, 150],
+        'window_sizes_sec': [50],
+        'batch_size': 32,
+        # 'window_sizes_sec': [5, 25, 50, 75, 100, 125, 150, 175, 200],
+        #'window_sizes_sec': [5],
+        'simulated_dataset_len': 1612,
         'real_dataset_len': 400,
         'simulated_dataset_duration_sec': 230,
         'real_dataset_duration_sec': 400,
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
-        'test_type': 'transformed_real_data',  # Set to "real_data" or "simulated_data" or "transformed_real_data" or "simulated_imu_from_real_gt_data"
+        'test_type': 'simulated_data',  # Set to "real_data" or "simulated_data" or "transformed_real_data" or "simulated_imu_from_real_gt_data"
         'train_model': True,  # Set to False to use the saved trained model
         'test_model': True,
         'test_baseline_model': True,
