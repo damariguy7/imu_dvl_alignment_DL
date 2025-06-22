@@ -12,6 +12,7 @@ from torch import nn
 from torch import Tensor
 from typing import Type, Any, Callable, Union, List, Optional
 from sklearn.model_selection import train_test_split
+import dask.dataframe as dd
 
 
 # Set seeds for reproducibility
@@ -449,156 +450,156 @@ class Resnet1chDnet(nn.Module):
         return self.model(x)
 
 
-
-# Define the CNN model
-class IMUDVLCNN(nn.Module):
-    def __init__(self, dropout_rate=0.2):  # Reduced dropout rate
-        super(IMUDVLCNN, self).__init__()
-        # Increase network capacity slightly
-        self.bn1 = nn.BatchNorm1d(128)
-        self.bn2 = nn.BatchNorm1d(256)
-        self.bn3 = nn.BatchNorm1d(512)
-
-        self.conv1 = nn.Conv1d(6, 128, kernel_size=5, padding=1)
-        self.conv2 = nn.Conv1d(128, 256, kernel_size=5, padding=1)
-        self.conv3 = nn.Conv1d(256, 512, kernel_size=5, padding=1)
-
-        self.pool = nn.AdaptiveAvgPool1d(1)
-        self.dropout = nn.Dropout(dropout_rate)
-
-        self.fc1 = nn.Linear(512, 1024)
-        self.fc2 = nn.Linear(1024, 3)
-        self.relu = nn.ReLU()
-
-    def forward(self, x):
-        x = x.permute(0, 2, 1)
-
-        # Residual connection for first block
-        identity = self.conv1(x)
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = x + identity  # Residual connection
-        x = self.dropout(x)
-
-        # Second block
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-
-        # Third block
-        x = self.conv3(x)
-        x = self.bn3(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-
-        x = self.pool(x)
-        x = x.view(x.size(0), -1)
-
-        x = self.fc1(x)
-        x = self.relu(x)
-        x = self.dropout(x)
-        x = self.fc2(x)
-
-        return x
-
-
-class ResBlock1D(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size=3):
-        super(ResBlock1D, self).__init__()
-        self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size, padding=kernel_size // 2)
-        self.bn1 = nn.BatchNorm1d(out_channels)
-        self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size, padding=kernel_size // 2)
-        self.bn2 = nn.BatchNorm1d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-
-        # Projection shortcut if dimensions change
-        self.shortcut = nn.Sequential()
-        if in_channels != out_channels:
-            self.shortcut = nn.Sequential(
-                nn.Conv1d(in_channels, out_channels, 1),
-                nn.BatchNorm1d(out_channels)
-            )
-
-    def forward(self, x):
-        identity = self.shortcut(x)
-
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-
-        out = self.conv2(out)
-        out = self.bn2(out)
-
-        out += identity
-        out = self.relu(out)
-
-        return out
-
-
-class SimplerIMUResNet(nn.Module):
-    def __init__(self, dropout_rate=0.2):
-        super(SimplerIMUResNet, self).__init__()
-
-        # Initial convolution
-        self.conv1 = nn.Conv1d(6, 64, kernel_size=7, padding=3)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
-
-        # ResNet blocks with increasing channels
-        self.res1_1 = ResBlock1D(64, 128)
-        # self.res1_2 = ResBlock1D(64, 64)
-
-        self.res2_1 = ResBlock1D(128, 256)
-        # self.res2_2 = ResBlock1D(128, 128)
-
-        self.res3_1 = ResBlock1D(256, 512)
-        # self.res3_2 = ResBlock1D(256, 256)
-
-        self.res4_1 = ResBlock1D(512, 1024)
-        # self.res4_2 = ResBlock1D(512, 512)
-
-        # Global pooling and final layers
-        self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.dropout = nn.Dropout(dropout_rate)
-        self.fc = nn.Linear(1024, 3)
-
-    def forward(self, x):
-        # Input shape: (batch, time, features)
-        x = x.permute(0, 2, 1)  # to (batch, features, time)
-
-        # Initial convolution block
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-
-        # ResNet blocks
-        # Stage 1
-        x = self.res1_1(x)
-        # x = self.res1_2(x)
-
-        # Stage 2
-        x = self.res2_1(x)
-        # x = self.res2_2(x)
-
-        # Stage 3
-        x = self.res3_1(x)
-        # x = self.res3_2(x)
-
-        # Stage 4
-        x = self.res4_1(x)
-        # x = self.res4_2(x)
-
-        # Global pooling and prediction
-        x = self.avgpool(x)
-        x = torch.flatten(x, start_dim=1)
-        # x = self.dropout(x)
-        x = self.fc(x)
-
-        return x
+#
+# # Define the CNN model
+# class IMUDVLCNN(nn.Module):
+#     def __init__(self, dropout_rate=0.2):  # Reduced dropout rate
+#         super(IMUDVLCNN, self).__init__()
+#         # Increase network capacity slightly
+#         self.bn1 = nn.BatchNorm1d(128)
+#         self.bn2 = nn.BatchNorm1d(256)
+#         self.bn3 = nn.BatchNorm1d(512)
+#
+#         self.conv1 = nn.Conv1d(6, 128, kernel_size=5, padding=1)
+#         self.conv2 = nn.Conv1d(128, 256, kernel_size=5, padding=1)
+#         self.conv3 = nn.Conv1d(256, 512, kernel_size=5, padding=1)
+#
+#         self.pool = nn.AdaptiveAvgPool1d(1)
+#         self.dropout = nn.Dropout(dropout_rate)
+#
+#         self.fc1 = nn.Linear(512, 1024)
+#         self.fc2 = nn.Linear(1024, 3)
+#         self.relu = nn.ReLU()
+#
+#     def forward(self, x):
+#         x = x.permute(0, 2, 1)
+#
+#         # Residual connection for first block
+#         identity = self.conv1(x)
+#         x = self.conv1(x)
+#         x = self.bn1(x)
+#         x = self.relu(x)
+#         x = x + identity  # Residual connection
+#         x = self.dropout(x)
+#
+#         # Second block
+#         x = self.conv2(x)
+#         x = self.bn2(x)
+#         x = self.relu(x)
+#         x = self.dropout(x)
+#
+#         # Third block
+#         x = self.conv3(x)
+#         x = self.bn3(x)
+#         x = self.relu(x)
+#         x = self.dropout(x)
+#
+#         x = self.pool(x)
+#         x = x.view(x.size(0), -1)
+#
+#         x = self.fc1(x)
+#         x = self.relu(x)
+#         x = self.dropout(x)
+#         x = self.fc2(x)
+#
+#         return x
+#
+#
+# class ResBlock1D(nn.Module):
+#     def __init__(self, in_channels, out_channels, kernel_size=3):
+#         super(ResBlock1D, self).__init__()
+#         self.conv1 = nn.Conv1d(in_channels, out_channels, kernel_size, padding=kernel_size // 2)
+#         self.bn1 = nn.BatchNorm1d(out_channels)
+#         self.conv2 = nn.Conv1d(out_channels, out_channels, kernel_size, padding=kernel_size // 2)
+#         self.bn2 = nn.BatchNorm1d(out_channels)
+#         self.relu = nn.ReLU(inplace=True)
+#
+#         # Projection shortcut if dimensions change
+#         self.shortcut = nn.Sequential()
+#         if in_channels != out_channels:
+#             self.shortcut = nn.Sequential(
+#                 nn.Conv1d(in_channels, out_channels, 1),
+#                 nn.BatchNorm1d(out_channels)
+#             )
+#
+#     def forward(self, x):
+#         identity = self.shortcut(x)
+#
+#         out = self.conv1(x)
+#         out = self.bn1(out)
+#         out = self.relu(out)
+#
+#         out = self.conv2(out)
+#         out = self.bn2(out)
+#
+#         out += identity
+#         out = self.relu(out)
+#
+#         return out
+#
+#
+# class SimplerIMUResNet(nn.Module):
+#     def __init__(self, dropout_rate=0.2):
+#         super(SimplerIMUResNet, self).__init__()
+#
+#         # Initial convolution
+#         self.conv1 = nn.Conv1d(6, 64, kernel_size=7, padding=3)
+#         self.bn1 = nn.BatchNorm1d(64)
+#         self.relu = nn.ReLU(inplace=True)
+#         self.maxpool = nn.MaxPool1d(kernel_size=3, stride=2, padding=1)
+#
+#         # ResNet blocks with increasing channels
+#         self.res1_1 = ResBlock1D(64, 128)
+#         # self.res1_2 = ResBlock1D(64, 64)
+#
+#         self.res2_1 = ResBlock1D(128, 256)
+#         # self.res2_2 = ResBlock1D(128, 128)
+#
+#         self.res3_1 = ResBlock1D(256, 512)
+#         # self.res3_2 = ResBlock1D(256, 256)
+#
+#         self.res4_1 = ResBlock1D(512, 1024)
+#         # self.res4_2 = ResBlock1D(512, 512)
+#
+#         # Global pooling and final layers
+#         self.avgpool = nn.AdaptiveAvgPool1d(1)
+#         self.dropout = nn.Dropout(dropout_rate)
+#         self.fc = nn.Linear(1024, 3)
+#
+#     def forward(self, x):
+#         # Input shape: (batch, time, features)
+#         x = x.permute(0, 2, 1)  # to (batch, features, time)
+#
+#         # Initial convolution block
+#         x = self.conv1(x)
+#         x = self.bn1(x)
+#         x = self.relu(x)
+#         x = self.maxpool(x)
+#
+#         # ResNet blocks
+#         # Stage 1
+#         x = self.res1_1(x)
+#         # x = self.res1_2(x)
+#
+#         # Stage 2
+#         x = self.res2_1(x)
+#         # x = self.res2_2(x)
+#
+#         # Stage 3
+#         x = self.res3_1(x)
+#         # x = self.res3_2(x)
+#
+#         # Stage 4
+#         x = self.res4_1(x)
+#         # x = self.res4_2(x)
+#
+#         # Global pooling and prediction
+#         x = self.avgpool(x)
+#         x = torch.flatten(x, start_dim=1)
+#         # x = self.dropout(x)
+#         x = self.fc(x)
+#
+#         return x
 
 
 def train_model(model, train_loader, val_loader, optimizer, num_epochs, device,
@@ -827,36 +828,57 @@ def single_quaternion_to_euler(q):
 
     return roll_deg, pitch_deg, yaw_deg
 
-
-def save_results_numpy(mean_rmse_svd_degrees_per_num_samples_list, svd_time_list, save_dir):
+def save_baseline_results_numpy(mean_rmse_svd_degrees_per_num_samples_list, svd_time_list,rmse_test_list, current_time_test_list, config):
     """
     Save results as NumPy files.
 
     Args:
         mean_rmse_svd_degrees_per_num_samples_list: List of RMSE values
         svd_time_list: List of time values
-        save_dir: Directory to save the results
+        config: Includes directory to save the results
     """
-    np.save(f"{save_dir}/mean_rmse_svd.npy", np.array(mean_rmse_svd_degrees_per_num_samples_list))
-    np.save(f"{save_dir}/svd_time.npy", np.array(svd_time_list))
+    data_path = config['data_path']
+    saved_baseline_results_file_name = config['saved_baseline_results_file_name']
+    # rmse_saved_baseline_results_file_name = f"rmse_{saved_baseline_results_file_name}.npy"
 
-    print(f"Results saved to {save_dir}")
 
 
-def load_results_numpy(save_dir):
+    np.save(os.path.join(data_path, 'baseline_rmse_results', f"rmse_{saved_baseline_results_file_name}.npy"), np.array(mean_rmse_svd_degrees_per_num_samples_list))
+    np.save(os.path.join(data_path, 'baseline_rmse_results', f"timeline_{saved_baseline_results_file_name}.npy"), np.array(svd_time_list))
+    np.save(os.path.join(data_path, 'baseline_rmse_results', f"rmse.npy"), np.array(rmse_test_list))
+    np.save(os.path.join(data_path, 'baseline_rmse_results', f"timeline.npy"), np.array(current_time_test_list))
+
+
+
+
+    print(f"Results saved to {saved_baseline_results_file_name}")
+
+
+def load_baseline_results_numpy(config):
     """
     Load results from NumPy files.
 
     Args:
-        save_dir: Directory containing the results
+        config: Includes directory containing the results
 
     Returns:
         Loaded arrays
     """
-    mean_rmse_svd = np.load(f"{save_dir}/mean_rmse_svd.npy").tolist()
-    svd_time = np.load(f"{save_dir}/svd_time.npy").tolist()
+    data_path = config['data_path']
+    loaded_baseline_results_file_names_list = config['loaded_baseline_results_file_names_list']
+    loaded_rmse_baseline_results_file_names_list = []
+    loaded_timeline_baseline_results_file_names_list = []
 
-    return mean_rmse_svd, svd_time
+
+    for file_name in loaded_baseline_results_file_names_list:
+        loaded_rmse_baseline_results_file_names_list.append(np.load(os.path.join(data_path,'baseline_rmse_results',f"rmse_{file_name}.npy")).tolist())
+        loaded_timeline_baseline_results_file_names_list.append(np.load(os.path.join(data_path,'baseline_rmse_results',f"timeline_{file_name}.npy")).tolist())
+
+
+    # mean_rmse_svd = np.load(f"baseline_rmse_results/mean_rmse_svd.npy").tolist()
+    # svd_time = np.load(f"baseline_rmse_results/svd_time.npy").tolist()
+
+    return loaded_rmse_baseline_results_file_names_list, loaded_timeline_baseline_results_file_names_list
 
 
 
@@ -1507,6 +1529,84 @@ def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degree
     # Show plot
     plt.show(block=False)
 
+
+def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_time_test_list=None,
+                              rmse_test_list=None):
+    """
+    Plot multiple baseline results on the same plot with the same style as plot_results_graph_rmse_net_and_rmse_svd.
+
+    Args:
+        timeline_lists: List of lists containing timeline data for each baseline
+        rmse_lists: List of lists containing RMSE data for each baseline
+        labels: Optional list of labels for each baseline
+        current_time_test_list: Optional list of window sizes for test data
+        rmse_test_list: Optional list of RMSE values for test data
+    """
+    # Create a single figure
+    plt.figure(figsize=(12, 8))
+
+    # Increase font size globally
+    plt.rcParams.update({'font.size': 14})
+
+    # Colors for different baselines - using the same color scheme as the original function
+    colors = ['blue', 'green', 'red', 'brown', 'orange', 'pink', 'gray', 'cyan']
+
+    # Plot each baseline - first one as continuous line, others as scatter points
+    for i, (timeline, rmse) in enumerate(zip(timeline_lists, rmse_lists)):
+        color = colors[i % len(colors)]
+        label = labels[i] if labels is not None and i < len(labels) else f'Baseline {i + 1}'
+
+        if i == 0:
+            # First baseline as continuous line (like original baseline)
+            plt.plot(timeline, rmse, color=color, linestyle='-', label=label, linewidth=2)
+        else:
+            # Other baselines as scatter points (like AlignNet style)
+            plt.scatter(timeline, rmse, color=color, marker='o', label=label, s=100)
+
+    # Plot test data if provided (scatter points like AlignNet in original function)
+    if current_time_test_list is not None and rmse_test_list is not None:
+        plt.scatter(current_time_test_list, rmse_test_list, color='red', marker='o', label='AlignNet', s=100)
+
+    # Create tick marks for x-axis - same logic as original function
+    max_time = max(max(t) for t in timeline_lists)
+    if current_time_test_list:
+        max_time = max(max_time, max(current_time_test_list))
+
+    # Small intervals for important points
+    small_intervals = np.array([5, 25, 50, 75])
+    # Large intervals for regular spacing
+    large_intervals = np.arange(0, max_time + 50, 50)  # 0 to max_time in steps of 50
+
+    # Combine and ensure all ticks are unique and sorted
+    all_ticks = np.unique(np.concatenate([small_intervals, large_intervals]))
+    all_ticks = all_ticks[all_ticks <= max_time]
+
+    # Set x-axis ticks with larger font
+    plt.xticks(all_ticks, fontsize=22)
+
+    # Increase y-axis tick font size
+    plt.yticks(fontsize=22)
+
+    # Add labels and title with larger font
+    plt.xlabel('Time [sec]', fontsize=30)
+    plt.ylabel('Alignment RMSE [deg]', fontsize=30)
+
+    # Add primary grid - make sure grid aligns with actual ticks
+    plt.grid(True, which='major', linestyle='-', alpha=0.5)
+
+    # Add special grid lines for important intervals
+    for x in small_intervals:
+        plt.axvline(x=x, color='gray', linestyle=':', alpha=0.5)
+
+    # Add legend with larger font
+    plt.legend(fontsize=24, loc='upper right')
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Show plot
+    plt.show(block=False)
+
 def split_data_properly(data_pd, num_sequences, sequence_length, train_size=0.6, val_size=0.2):
     # Create sequence indices
     sequence_indices = np.arange(num_sequences)
@@ -1579,7 +1679,6 @@ def split_data_properly(data_pd, num_sequences, sequence_length, train_size=0.6,
 
 
 
-
 def main(config):
     # Example usage
 
@@ -1606,6 +1705,11 @@ def main(config):
     if(config['test_type'] == 'simulated_data'):
         file_name = config['simulated_data_file_name']
         data_pd = pd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
+
+        # use for very large datasets
+        #ddf = dd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
+
+
     elif(config['test_type'] == 'transformed_real_data'):
         file_name = config['transformed_real_data_file_name']
         data_pd = pd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
@@ -1728,8 +1832,9 @@ def main(config):
             test_type = config['test_type']
             #model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_{test_type}_window_{window_size}.pth')
             #model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_window_{window_size}.pth')
-            model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_straight_descent_10_+2_ba_real_bg_0_1_window_{window_size}.pth')
-            #model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_imu_from_real_gt_data_window_{window_size}.pth')
+            # model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_straight_descent_22_+2_ba_real_bg_0_1_window_{window_size}.pth')
+            # model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_straight_descent_22_+0_227_ba100_bg_0_1_window_{window_size}.pth')
+            model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_transformed_real_data_traj12_22_+2_window_{window_size}.pth')
             # Load model
             # model = SimplerIMUResNet(dropout_rate=0.3)
             model = Resnet1chDnet()
@@ -1769,13 +1874,26 @@ def main(config):
 
 # Test Baseline Model section #################
     if config['test_baseline_model']:
-        # mean_rmse_svd_degrees_per_num_samples_list, mean_rmse_acc_gd_degrees_per_num_samples_list, svd_time_list = calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sample_freq, config)
-        # plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list, meaan_rmse_acc_gd_degrees_per_num_samples_list, current_time_test_list, rmse_test_list)
 
         mean_rmse_svd_degrees_per_num_samples_list, svd_time_list = calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sample_freq, config)
-        #save_results_numpy(mean_rmse_svd_degrees_per_num_samples_list, svd_time_list, save_dir):
+        # save_baseline_results_numpy(mean_rmse_svd_degrees_per_num_samples_list, svd_time_list,rmse_test_list, current_time_test_list, config)
         plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list, current_time_test_list, rmse_test_list)
 
+        # loaded_rmse_baseline_results_list, loaded_timeline_baseline_results_list = load_baseline_results_numpy(config)
+        # print("Baseline RMSE")
+        # # Create labels for the baselines (optional)
+        # baseline_labels = [
+        #     f"Baseline", f"AligNet - sim2real", f"AligNet"
+        # ]
+        #
+        # # Plot all baselines on the same plot
+        # plot_all_baseline_results(
+        #     loaded_timeline_baseline_results_list,
+        #     loaded_rmse_baseline_results_list,
+        #     labels=baseline_labels,
+        #     current_time_test_list=current_time_test_list if config['test_model'] else None,
+        #     rmse_test_list=rmse_test_list if config['test_model'] else None
+        # )
 
 
 if __name__ == '__main__':
@@ -1792,14 +1910,16 @@ if __name__ == '__main__':
         'pitch_gt_deg': 0.2,
         'yaw_gt_deg': -44.3,
         # 'window_sizes_sec': [5, 25, 50, 75, 100, 125, 150],
-        #'window_sizes_sec': [75],
-        #'window_sizes_sec': [5,25,50,75,100,125,150,200],
-        'window_sizes_sec': [5,25,50,75,100,150],
-        #'window_sizes_sec': [5,25,50,75,100],
+        # 'window_sizes_sec': [75],
+        #'window_sizes_sec': [5,25,50,75,100,125,150,175,200],
+        # 'window_sizes_sec': [5,25],
+        'window_sizes_sec': [5,25,50,75,100],
+        # 'window_sizes_sec': [175],
         'batch_size': 32,
         #'simulated_dataset_len': 1612, # important!! you have to update it, from the data output file, every time you change dataset
         #'simulated_dataset_len': 2311, # important!! you have to update it, from the data output file, every time you change dataset
-        'simulated_dataset_len': 2076, # important!! you have to update it, from the data output file, every time you change dataset
+        # 'simulated_dataset_len': 2076, # - straight descent - important!! you have to update it, from the data output file, every time you change dataset
+        'simulated_dataset_len': 3234, # - lawn_mower_1 - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
         'real_dataset_len': 400,
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
         'test_type': 'transformed_real_data',  # Set to "real_data" or "simulated_data" or "transformed_real_data" or "simulated_imu_from_real_gt_data"
@@ -1807,20 +1927,19 @@ if __name__ == '__main__':
         'test_model': True,
         'test_baseline_model': True,
         'trained_model_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work\\trained_model",
+        #'simulated_data_file_name': 'simulated_data_output.csv',
+        # 'simulated_data_file_name': 'simulated_data_output_straight_descent_22_+2_ba_real_bg_0_01.csv',
         'simulated_data_file_name': 'simulated_data_output.csv',
-        #'simulated_data_file_name': 'simulated_data_output_22_+2_ba100_bg1.csv',
         'real_data_file_name': 'real_data_output.csv',
-        #'transformed_real_data_file_name': 'transformed_real_data_output.csv',
-        'transformed_real_data_file_name': 'transformed_real_data_output_traj12_10_+2.csv',
+        # 'transformed_real_data_file_name': 'transformed_real_data_output.csv',
+        # 'transformed_real_data_file_name': 'transformed_real_data_output_traj12_22_+2.csv',
+        'transformed_real_data_file_name': 'transformed_real_data_output.csv',
         'simulated_imu_from_real_gt_data_file_name': 'simulated_imu_from_real_gt_data_output.csv',
-        'model_specific_path_simulated_data': 'imu_dvl_model_simulated_imu_from_real_gt_data_window_50.pth',
-        'model_specific_path_transformed_real_data': 'imu_dvl_model_simulated_imu_from_real_gt_data_window_50.pth',
-        'model_specific_path_simulated_imu_from_real_gt_data': 'imu_dvl_model_simulated_imu_from_real_gt_data_window_50.pth',
+        'saved_baseline_results_file_name': 'baseline_results_transformed_real_data_output_traj12_22_+2',
+        'loaded_baseline_results_file_names_list': ['baseline_results_transformed_real_data_output_traj12_22_+2','sim2real_traj12_22_+2', 'real_traj12_22_+2'],
         'real_imu_file_name': 'IMU_trajectory.csv',
         'real_dvl_file_name': 'DVL_trajectory.csv',
-        'real_gt_file_name': 'GT_trajectory.csv',
-        'saved_baseline_results_file_name': 'simulated_data_straight_descent_10_+2_ba_real_bg_0_1',
-        'loaded_baseline_results_file_names': ['GT_trajectory.csv',]
+        'real_gt_file_name': 'GT_trajectory.csv'
     }
 
     # orzi_euler_config = {
