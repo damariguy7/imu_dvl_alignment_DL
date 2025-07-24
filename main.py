@@ -12,6 +12,7 @@ from torch import nn
 from torch import Tensor
 from typing import Type, Any, Callable, Union, List, Optional
 from sklearn.model_selection import train_test_split
+from math import cos, radians
 import dask.dataframe as dd
 
 
@@ -48,6 +49,117 @@ __all__ = [
 #     "wide_resnet50_2": "https://download.pytorch.org/models/wide_resnet50_2-95faca4d.pth",
 #     "wide_resnet101_2": "https://download.pytorch.org/models/wide_resnet101_2-32ee1156.pth",
 # }
+
+
+def plot_trajectory_path(index,
+                         data_path="C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work"):
+    """
+    Plot trajectory path from GT_trajectory file in meters.
+
+    Args:
+        index (int): Index number for the trajectory file
+        data_path (str): Path to the data directory
+    """
+
+    # Construct filename
+    filename = f'GT_trajectory{index}.csv'
+    filepath = os.path.join(data_path, filename)
+
+    try:
+        # Read the CSV file with header row
+        df = pd.read_csv(filepath, header=0)
+
+        # Extract data (skip header row by using header=0)
+        time = df.iloc[:, 0].values  # Time [sec]
+        longitude_rad = df.iloc[:, 1].values  # Longitude [rad]
+        latitude_rad = df.iloc[:, 2].values  # Latitude [rad]
+        altitude = df.iloc[:, 3].values  # Altitude [m]
+
+        # Convert lat/lon from radians to degrees for reference point calculation
+        latitude_deg = np.degrees(latitude_rad)
+        longitude_deg = np.degrees(longitude_rad)
+
+        # Use first point as reference (origin)
+        lat_ref = latitude_rad[0]
+        lon_ref = longitude_rad[0]
+
+        # Earth radius in meters
+        R = 6378137.0  # WGS84 equatorial radius
+
+        # Convert lat/lon to local coordinates in meters
+        # Using simple equirectangular projection (good for small areas)
+        x_meters = (longitude_rad - lon_ref) * R * cos(lat_ref)
+        y_meters = (latitude_rad - lat_ref) * R
+
+        # Create figure with subplots
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 12))
+
+        # 1. 2D trajectory plot (X-Y)
+        ax1.plot(x_meters, y_meters, 'b-', linewidth=2, label='Trajectory')
+        ax1.plot(x_meters[0], y_meters[0], 'go', markersize=10, label='Start')
+        ax1.plot(x_meters[-1], y_meters[-1], 'ro', markersize=10, label='End')
+        ax1.set_xlabel('East (m)')
+        ax1.set_ylabel('North (m)')
+        ax1.set_title(f'Trajectory {index} - Horizontal Path')
+        ax1.grid(True, alpha=0.3)
+        ax1.legend()
+        ax1.axis('equal')
+
+        # 2. Altitude vs time
+        ax2.plot(time, altitude, 'r-', linewidth=2)
+        ax2.set_xlabel('Time (s)')
+        ax2.set_ylabel('Altitude (m)')
+        ax2.set_title(f'Trajectory {index} - Altitude Profile')
+        ax2.grid(True, alpha=0.3)
+
+        # 3. 3D trajectory plot
+        ax3 = fig.add_subplot(2, 2, 3, projection='3d')
+        ax3.plot(x_meters, y_meters, altitude, 'b-', linewidth=2)
+        ax3.scatter(x_meters[0], y_meters[0], altitude[0], color='green', s=100, label='Start')
+        ax3.scatter(x_meters[-1], y_meters[-1], altitude[-1], color='red', s=100, label='End')
+        ax3.set_xlabel('East (m)')
+        ax3.set_ylabel('North (m)')
+        ax3.set_zlabel('Altitude (m)')
+        ax3.set_title(f'Trajectory {index} - 3D Path')
+        ax3.legend()
+
+        # 4. Distance traveled vs time
+        # Calculate cumulative distance
+        distances = np.sqrt(np.diff(x_meters) ** 2 + np.diff(y_meters) ** 2 + np.diff(altitude) ** 2)
+        cumulative_distance = np.concatenate(([0], np.cumsum(distances)))
+
+        ax4.plot(time, cumulative_distance, 'g-', linewidth=2)
+        ax4.set_xlabel('Time (s)')
+        ax4.set_ylabel('Distance Traveled (m)')
+        ax4.set_title(f'Trajectory {index} - Cumulative Distance')
+        ax4.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.suptitle(f'GT Trajectory {index} Analysis', fontsize=16, y=1.02)
+
+        # Print trajectory statistics
+        total_distance = cumulative_distance[-1]
+        duration = time[-1] - time[0]
+        max_altitude = np.max(altitude)
+        min_altitude = np.min(altitude)
+
+        print(f"\nTrajectory {index} Statistics:")
+        print(f"Duration: {duration:.2f} seconds")
+        print(f"Total distance: {total_distance:.2f} meters")
+        print(f"Average speed: {total_distance / duration:.2f} m/s")
+        print(f"Altitude range: {min_altitude:.2f} to {max_altitude:.2f} meters")
+        print(f"Number of data points: {len(time)}")
+
+        plt.show()
+
+        return x_meters, y_meters, altitude, time
+
+    except FileNotFoundError:
+        print(f"Error: File {filepath} not found.")
+        return None, None, None, None
+    except Exception as e:
+        print(f"Error reading file {filepath}: {str(e)}")
+        return None, None, None, None
 
 
 def conv3x3(in_planes: int, out_planes: int, stride: int = 1, groups: int = 1, dilation: int = 1) -> nn.Conv1d:
@@ -838,20 +950,20 @@ def save_baseline_results_numpy(mean_rmse_svd_degrees_per_num_samples_list, svd_
         config: Includes directory to save the results
     """
     data_path = config['data_path']
-    saved_baseline_results_file_name = config['saved_baseline_results_file_name']
-    # rmse_saved_baseline_results_file_name = f"rmse_{saved_baseline_results_file_name}.npy"
+    saved_rmse_results_file_name = config['saved_rmse_results_file_name']
+    # rmse_saved_rmse_results_file_name = f"rmse_{saved_rmse_results_file_name}.npy"
 
 
 
-    np.save(os.path.join(data_path, 'baseline_rmse_results', f"rmse_{saved_baseline_results_file_name}.npy"), np.array(mean_rmse_svd_degrees_per_num_samples_list))
-    np.save(os.path.join(data_path, 'baseline_rmse_results', f"timeline_{saved_baseline_results_file_name}.npy"), np.array(svd_time_list))
-    np.save(os.path.join(data_path, 'baseline_rmse_results', f"rmse.npy"), np.array(rmse_test_list))
-    np.save(os.path.join(data_path, 'baseline_rmse_results', f"timeline.npy"), np.array(current_time_test_list))
+    np.save(os.path.join(data_path, 'rmse_results_dir', f"rmse_baseline_{saved_rmse_results_file_name}.npy"), np.array(mean_rmse_svd_degrees_per_num_samples_list))
+    np.save(os.path.join(data_path, 'rmse_results_dir', f"timeline_baseline_{saved_rmse_results_file_name}.npy"), np.array(svd_time_list))
+    np.save(os.path.join(data_path, 'rmse_results_dir', f"rmse_{saved_rmse_results_file_name}.npy"), np.array(rmse_test_list))
+    np.save(os.path.join(data_path, 'rmse_results_dir', f"timeline_{saved_rmse_results_file_name}.npy"), np.array(current_time_test_list))
 
 
 
 
-    print(f"Results saved to {saved_baseline_results_file_name}")
+    print(f"Results saved to {saved_rmse_results_file_name}")
 
 
 def load_baseline_results_numpy(config):
@@ -865,152 +977,189 @@ def load_baseline_results_numpy(config):
         Loaded arrays
     """
     data_path = config['data_path']
-    loaded_baseline_results_file_names_list = config['loaded_baseline_results_file_names_list']
-    loaded_rmse_baseline_results_file_names_list = []
-    loaded_timeline_baseline_results_file_names_list = []
+    loaded_file_names_list = config['loaded_rmse_results_file_names_list']
+    loaded_rmse_results_file_names_list = []
+    loaded_timeline_results_file_names_list = []
 
 
-    for file_name in loaded_baseline_results_file_names_list:
-        loaded_rmse_baseline_results_file_names_list.append(np.load(os.path.join(data_path,'baseline_rmse_results',f"rmse_{file_name}.npy")).tolist())
-        loaded_timeline_baseline_results_file_names_list.append(np.load(os.path.join(data_path,'baseline_rmse_results',f"timeline_{file_name}.npy")).tolist())
+    for file_name in loaded_file_names_list:
+        loaded_rmse_results_file_names_list.append(np.load(os.path.join(data_path,'rmse_results_dir',f"rmse_{file_name}.npy")).tolist())
+        loaded_timeline_results_file_names_list.append(np.load(os.path.join(data_path,'rmse_results_dir',f"timeline_{file_name}.npy")).tolist())
 
 
-    # mean_rmse_svd = np.load(f"baseline_rmse_results/mean_rmse_svd.npy").tolist()
-    # svd_time = np.load(f"baseline_rmse_results/svd_time.npy").tolist()
+    # mean_rmse_svd = np.load(f"rmse_results_dir/mean_rmse_svd.npy").tolist()
+    # svd_time = np.load(f"rmse_results_dir/svd_time.npy").tolist()
 
-    return loaded_rmse_baseline_results_file_names_list, loaded_timeline_baseline_results_file_names_list
-
-
-
-    #
-    # for test_idx, test_sequence in enumerate(v_imu_dvl_test_series_list):
-    #     v_imu_seq = test_sequence[0]
-    #     v_dvl_seq = test_sequence[1]
-    #     eul_body_dvl_gt_seq = test_sequence[2]
-    #     dataset_len = len(v_imu_seq)
-    #
-    #     rmse_svd_degrees_per_num_samples_list = []
-    #
-    #     for num_samples in range(start_num_of_samples, dataset_len, num_of_samples_slot):  # should Start from 2
-    #         v_imu_sampled = v_imu_seq[0:num_samples, :]
-    #         v_dvl_sampled = v_dvl_seq[0:num_samples, :]
-    #         euler_body_dvl_gt = eul_body_dvl_gt_seq[0, :]
-    #
-    #         euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled.T, v_dvl_sampled.T)
-    #         euler_angles_svd_degrees = np.degrees(euler_angles_svd_rads)
-    #
-    #         squared_error_svd_baseline = rmse_angle(np.array(euler_angles_svd_degrees),
-    #                                                                 euler_body_dvl_gt)
-    #
-    #         rmse_angles_svd = np.sqrt(squared_error_svd_baseline)
-    #
-    #         rmse_svd_degrees_per_num_samples_list.append(rmse_angles_svd)
-    #
-    #         rmse_svd_across_all_samples = np.sqrt(np.mean(rmse_svd_degrees_per_num_samples_list))
-    #
-    #         # Store in dictionary
-    #         if num_samples not in rmse_svd_all_tests_by_num_of_samples_dict:
-    #             rmse_svd_all_tests_by_num_of_samples_dict[num_samples] = []
-    #
-    #         rmse_svd_all_tests_by_num_of_samples_dict[num_samples].append(rmse_svd_across_all_samples)
-    #
-    # mean_rmse_svd_degrees_per_num_samples_list = []
-    #
-    # for num_samples in range(start_num_of_samples, dataset_len, num_of_samples_slot):
-    #     mean_euler_angles_svd_per_num_samples = np.mean(rmse_svd_all_tests_by_num_of_samples_dict[num_samples])
-    #     mean_rmse_svd_degrees_per_num_samples_list.append(mean_euler_angles_svd_per_num_samples)
-    #
-    # svd_time_list = list(range(0, 323))
-    #
-    # return mean_rmse_svd_degrees_per_num_samples_list, svd_time_list
+    return loaded_rmse_results_file_names_list, loaded_timeline_results_file_names_list
 
 
+def movmean(data, window_size):
+    """
+    Apply moving average filter to data (similar to MATLAB's movmean)
 
+    Args:
+        data: Input data array/list
+        window_size: Size of the moving window
+
+    Returns:
+        Smoothed data array
+    """
+    if len(data) < window_size:
+        # If data is shorter than window, return original data
+        return np.array(data)
+
+    # Convert to numpy array if not already
+    data = np.array(data)
+
+    # Use pandas rolling mean for efficient computation
+    df = pd.DataFrame(data)
+    smoothed = df.rolling(window=window_size, center=True, min_periods=1).mean().values.flatten()
+
+    return smoothed
+
+
+def movmean_numpy(data, window_size):
+    """
+    Alternative implementation using numpy only
+    """
+    data = np.array(data)
+    if len(data) < window_size:
+        return data
+
+    # Pad the data to handle edges
+    pad_width = window_size // 2
+    padded_data = np.pad(data, pad_width, mode='edge')
+
+    # Apply moving average
+    smoothed = np.convolve(padded_data, np.ones(window_size) / window_size, mode='same')
+
+    # Remove padding
+    return smoothed[pad_width:pad_width + len(data)]
 
 def evaluate_model(model, test_loader, device):
     model.eval()
-    total_loss = 0.0
     all_predictions = []
     all_targets = []
     mse_angle_list = []
 
-    # Lists to store per-dataset metrics
-    dataset_rmse_lists = []
-    current_dataset_predictions = []
-    current_dataset_targets = []
-    samples_per_dataset = len(next(iter(test_loader))[0])  # Get batch size
-    batch_count = 0
-
     with torch.no_grad():
-        for inputs, targets in test_loader:
+        for batch_idx, (inputs, targets) in enumerate(test_loader):
             inputs, targets = inputs.to(device), targets.to(device)
             outputs = model(inputs)
 
-            # Store predictions and targets
-            current_dataset_predictions.extend(outputs.cpu().numpy())
-            current_dataset_targets.extend(targets.cpu().numpy())
-            batch_count += 1
+            # Move to CPU immediately and detach
+            outputs_cpu = outputs.detach().cpu().numpy()
+            targets_cpu = targets.detach().cpu().numpy()
 
             # Calculate per-batch metrics
-            for ii in range(len(targets)):
-                mse_angle = calc_squared_err_angles(targets[ii].cpu().numpy(), outputs[ii].cpu().numpy())
-
+            for ii in range(len(targets_cpu)):
+                mse_angle = calc_squared_err_angles(targets_cpu[ii], outputs_cpu[ii])
                 mse_angle_list.append(mse_angle)
 
-                #         rmse_angles_svd = np.sqrt(squared_error_svd_baseline)
-                #
-                #         rmse_svd_degrees_per_num_samples_list.append(rmse_angles_svd)
-                #
-                #         rmse_svd_across_all_samples = np.sqrt(np.mean(rmse_svd_degrees_per_num_samples_list))
+            # Store on CPU
+            all_predictions.append(outputs_cpu)
+            all_targets.append(targets_cpu)
 
+            # Clear GPU cache periodically
+            if batch_idx % 10 == 0:  # Adjust frequency as needed
+                torch.cuda.empty_cache()
 
-
-
-            # # Check if we've completed a dataset
-            # if batch_count * samples_per_dataset >= len(test_loader.dataset):
-            #     # Calculate dataset-level metrics
-            #     dataset_predictions = np.array(current_dataset_predictions)
-            #     dataset_targets = np.array(current_dataset_targets)
-            #
-            #     # Calculate RMSE components for this dataset
-            #     rmse_components = np.sqrt(np.mean((dataset_predictions - dataset_targets) ** 2, axis=0))
-            #     dataset_rmse_lists.append(rmse_components)
-            #
-            #     # Reset for next dataset
-            #     current_dataset_predictions = []
-            #     current_dataset_targets = []
-            #     batch_count = 0
-
-            # # Calculate loss
-            # criterion = nn.CosineSimilarity()
-            # loss = torch.mean(torch.abs(criterion(targets, outputs)))
-            # loss = 1 - loss
-            # total_loss += loss.item()
-
-            all_predictions.append(outputs.cpu().numpy())
-            all_targets.append(targets.cpu().numpy())
-
-    # Calculate overall metrics
-    # avg_loss = total_loss / len(test_loader)
+    # Calculate metrics
     all_predictions = np.concatenate(all_predictions)
     all_targets = np.concatenate(all_targets)
 
-    # Calculate overall RMSE components
-    rmse_components = np.sqrt(np.mean((all_predictions - all_targets) ** 2, axis=0))
-
-    # Calculate total RMSE
-    total_rmse = np.sqrt(np.mean((all_predictions - all_targets) ** 2))
-
-    # Calculate mean RMSE across all samples
     rmse = np.sqrt(np.mean(mse_angle_list))
-
-    # # Calculate mean RMSE components across datasets
-    # if dataset_rmse_lists:
-    #     mean_dataset_rmse = np.mean(dataset_rmse_lists, axis=0)
-    # else:
-    #     mean_dataset_rmse = rmse_components
+    print(f'rmse is {rmse}')
 
     return rmse
+
+# def evaluate_model(model, test_loader, device):
+#
+#     model.eval()
+#     total_loss = 0.0
+#     all_predictions = []
+#     all_targets = []
+#     mse_angle_list = []
+#
+#     # Lists to store per-dataset metrics
+#     dataset_rmse_lists = []
+#     current_dataset_predictions = []
+#     current_dataset_targets = []
+#     samples_per_dataset = len(next(iter(test_loader))[0])  # Get batch size
+#     batch_count = 0
+#
+#     with torch.no_grad():
+#         for inputs, targets in test_loader:
+#             inputs, targets = inputs.to(device), targets.to(device)
+#             outputs = model(inputs)
+#
+#             # Store predictions and targets
+#             current_dataset_predictions.extend(outputs.cpu().numpy())
+#             current_dataset_targets.extend(targets.cpu().numpy())
+#             batch_count += 1
+#
+#             # Calculate per-batch metrics
+#             for ii in range(len(targets)):
+#                 mse_angle = calc_squared_err_angles(targets[ii].cpu().numpy(), outputs[ii].cpu().numpy())
+#
+#                 mse_angle_list.append(mse_angle)
+#
+#                 #         rmse_angles_svd = np.sqrt(squared_error_svd_baseline)
+#                 #
+#                 #         rmse_svd_degrees_per_num_samples_list.append(rmse_angles_svd)
+#                 #
+#                 #         rmse_svd_across_all_samples = np.sqrt(np.mean(rmse_svd_degrees_per_num_samples_list))
+#
+#
+#
+#
+#             # # Check if we've completed a dataset
+#             # if batch_count * samples_per_dataset >= len(test_loader.dataset):
+#             #     # Calculate dataset-level metrics
+#             #     dataset_predictions = np.array(current_dataset_predictions)
+#             #     dataset_targets = np.array(current_dataset_targets)
+#             #
+#             #     # Calculate RMSE components for this dataset
+#             #     rmse_components = np.sqrt(np.mean((dataset_predictions - dataset_targets) ** 2, axis=0))
+#             #     dataset_rmse_lists.append(rmse_components)
+#             #
+#             #     # Reset for next dataset
+#             #     current_dataset_predictions = []
+#             #     current_dataset_targets = []
+#             #     batch_count = 0
+#
+#             # # Calculate loss
+#             # criterion = nn.CosineSimilarity()
+#             # loss = torch.mean(torch.abs(criterion(targets, outputs)))
+#             # loss = 1 - loss
+#             # total_loss += loss.item()
+#
+#             all_predictions.append(outputs.cpu().numpy())
+#             all_targets.append(targets.cpu().numpy())
+#
+#     # Calculate overall metrics
+#     # avg_loss = total_loss / len(test_loader)
+#     all_predictions = np.concatenate(all_predictions)
+#     all_targets = np.concatenate(all_targets)
+#
+#     # Calculate overall RMSE components
+#     rmse_components = np.sqrt(np.mean((all_predictions - all_targets) ** 2, axis=0))
+#
+#     # Calculate total RMSE
+#     total_rmse = np.sqrt(np.mean((all_predictions - all_targets) ** 2))
+#
+#     # Calculate mean RMSE across all samples
+#     rmse = np.sqrt(np.mean(mse_angle_list))
+#
+#     print(f'rmse is {rmse}')
+#
+#     # # Calculate mean RMSE components across datasets
+#     # if dataset_rmse_lists:
+#     #     mean_dataset_rmse = np.mean(dataset_rmse_lists, axis=0)
+#     # else:
+#     #     mean_dataset_rmse = rmse_components
+#
+#     return rmse
 
 
 class IMUDVLWindowedDataset(Dataset):
@@ -1413,10 +1562,11 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sampl
 
     start_num_of_samples = sample_freq*1
     #end_num_of_samples = sample_freq*230
+    # end_num_of_samples = 200
     end_num_of_samples = dataset_len
-    # end_num_of_samples = dataset_len
     num_of_samples_slot = sample_freq*1
     rmse_svd_all_tests_by_num_of_samples_dict = {}
+    euler_rads_svd_all_tests_by_num_of_samples_dict = {}
     rmse_acc_gd_all_tests_by_num_of_samples_dict = {}
 
     for test_idx, test_sequence in enumerate(v_imu_dvl_test_series_list):
@@ -1446,6 +1596,7 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sampl
             # Store in dictionary
             if num_samples not in rmse_svd_all_tests_by_num_of_samples_dict:
                 rmse_svd_all_tests_by_num_of_samples_dict[num_samples] = []
+                euler_rads_svd_all_tests_by_num_of_samples_dict[num_samples] = []
 
             # # Store in dictionary
             # if num_samples not in rmse_acc_gd_all_tests_by_num_of_samples_dict:
@@ -1454,6 +1605,7 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sampl
 
 
             rmse_svd_all_tests_by_num_of_samples_dict[num_samples].append(svd_squared_err_angles)
+            euler_rads_svd_all_tests_by_num_of_samples_dict[num_samples].append(euler_angles_svd_rads)
             # rmse_acc_gd_all_tests_by_num_of_samples_dict[num_samples].append(acc_gd_squared_err_angles)
 
     mean_rmse_svd_degrees_per_num_samples_list = []
@@ -1477,8 +1629,11 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sampl
 
 def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list,
                                              current_time_test_list, rmse_test_list):
+    # Import required modules at the top
+    from matplotlib.patches import Rectangle
+
     # Create a single figure for total RMSE plot
-    plt.figure(figsize=(12, 8))
+    fig, ax = plt.subplots(figsize=(12, 8))
 
     # Increase font size globally
     plt.rcParams.update({'font.size': 14})
@@ -1488,9 +1643,9 @@ def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degree
     test_color = 'red'
 
     # Plot total RMSE for baseline and test
-    plt.plot(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list, color=baseline_color, linestyle='-',
-             label='Baseline', linewidth=2)
-    plt.scatter(current_time_test_list, rmse_test_list, color=test_color, marker='o', label='AlignNet', s=100)
+    ax.plot(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list, color=baseline_color, linestyle='-',
+            label='Baseline', linewidth=2)
+    ax.scatter(current_time_test_list, rmse_test_list, color=test_color, marker='o', label='AlignNet', s=100)
 
     # Create tick marks that align with both datasets
     # First, ensure we have the key points for small intervals
@@ -1504,24 +1659,81 @@ def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degree
     all_ticks = np.unique(np.concatenate([small_intervals, large_intervals]))
 
     # Set x-axis ticks with larger font
-    plt.xticks(all_ticks, fontsize=22)
+    ax.set_xticks(all_ticks)
+    ax.tick_params(axis='x', labelsize=22)
 
     # Increase y-axis tick font size
-    plt.yticks(fontsize=22)
+    ax.tick_params(axis='y', labelsize=22)
 
     # Add labels and title with larger font
-    plt.xlabel('Time [sec]', fontsize=30)
-    plt.ylabel('Alignment RMSE [deg]', fontsize=30)
+    ax.set_xlabel('Time [sec]', fontsize=30)
+    ax.set_ylabel('Alignment RMSE [deg]', fontsize=30)
 
     # Add primary grid - make sure grid aligns with actual ticks
-    plt.grid(True, which='major', linestyle='-', alpha=0.5)
+    ax.grid(True, which='major', linestyle='-', alpha=0.5)
 
     # Add special grid lines for important intervals
     for x in small_intervals:
-        plt.axvline(x=x, color='gray', linestyle=':', alpha=0.5)
+        ax.axvline(x=x, color='gray', linestyle=':', alpha=0.5)
 
     # Add legend with larger font
-    plt.legend(fontsize=24, loc='upper right')
+    ax.legend(fontsize=24, loc='upper right')
+
+    # # Create inset zoom plot focusing on the scatter points (AlignNet values)
+    # if current_time_test_list and rmse_test_list:
+    #     # Calculate zoom region based on scatter points
+    #     x_min, x_max = min(current_time_test_list), max(current_time_test_list)
+    #     y_min, y_max = min(rmse_test_list), max(rmse_test_list)
+    #
+    #     # Add some padding to the zoom region (increase padding for better visibility)
+    #     x_padding = max(5, (x_max - x_min) * 0.2)  # At least 5 units padding
+    #     y_padding = max(0.5, (y_max - y_min) * 0.3)  # At least 0.5 units padding
+    #
+    #     zoom_x_min = max(0, x_min - x_padding)
+    #     zoom_x_max = x_max + x_padding
+    #     zoom_y_min = max(0, y_min - y_padding)
+    #     zoom_y_max = y_max + y_padding
+    #
+    #     # Create inset axes - using a simpler approach
+    #     # Position: [left, bottom, width, height] in axes coordinates
+    #     axins = fig.add_axes([0.7, 0.30, 0.30, 0.25])  # Upper left corner at 70% height
+    #
+    #     # Plot the same data in the inset, but focus on the zoom region
+    #     # Filter baseline data within zoom region
+    #     zoom_svd_times = []
+    #     zoom_svd_rmse = []
+    #     for i, t in enumerate(svd_time_list):
+    #         if zoom_x_min <= t <= zoom_x_max:
+    #             zoom_svd_times.append(t)
+    #             zoom_svd_rmse.append(mean_rmse_svd_degrees_per_num_samples_list[i])
+    #
+    #     if zoom_svd_times:
+    #         axins.plot(zoom_svd_times, zoom_svd_rmse, color=baseline_color, linestyle='-',
+    #                    linewidth=2, label='Baseline')
+    #
+    #     # Plot scatter points in inset
+    #     axins.scatter(current_time_test_list, rmse_test_list, color=test_color, marker='o',
+    #                   s=120, label='AlignNet', zorder=5)
+    #
+    #     # Set the zoom limits
+    #     axins.set_xlim(zoom_x_min, zoom_x_max)
+    #     axins.set_ylim(zoom_y_min, zoom_y_max)
+    #
+    #     # Add grid to inset
+    #     axins.grid(True, alpha=0.3, linewidth=0.5)
+    #
+    #     # Customize inset appearance
+    #     axins.tick_params(labelsize=12)
+    #     axins.set_xlabel('Time [sec]', fontsize=12)
+    #     axins.set_ylabel('RMSE [deg]', fontsize=12)
+    #
+    #     # Add a title to the inset
+    #     axins.set_title('Zoom: AlignNet Region', fontsize=12, pad=10)
+    #
+    #     # Add border around inset
+    #     for spine in axins.spines.values():
+    #         spine.set_edgecolor('black')
+    #         spine.set_linewidth(1.5)
 
     # Adjust layout
     plt.tight_layout()
@@ -1533,6 +1745,7 @@ def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degree
 def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_time_test_list=None,
                               rmse_test_list=None):
     """
+    Enhanced version with inset zoom capability.
     Plot multiple baseline results on the same plot with the same style as plot_results_graph_rmse_net_and_rmse_svd.
 
     Args:
@@ -1542,14 +1755,45 @@ def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_t
         current_time_test_list: Optional list of window sizes for test data
         rmse_test_list: Optional list of RMSE values for test data
     """
+    # Import required modules
+    from matplotlib.patches import Rectangle
+
+    # Define window sizes to print values for
+    window_sizes_sec = [5, 25, 50, 75, 100]
+
+    # Print RMSE values at specific window sizes for all datasets
+    print("\n" + "=" * 60)
+    print("RMSE VALUES AT SPECIFIC WINDOW SIZES")
+    print("=" * 60)
+    for i, (timeline, rmse, label) in enumerate(
+            zip(timeline_lists, rmse_lists, labels or [f"Dataset {i + 1}" for i in range(len(timeline_lists))])):
+        print(f"\n{label}:")
+        for window_size in window_sizes_sec:
+            # Find the closest timeline point to the window size
+            closest_idx = None
+            min_diff = float('inf')
+            for j, time_point in enumerate(timeline):
+                diff = abs(time_point - window_size)
+                if diff < min_diff:
+                    min_diff = diff
+                    closest_idx = j
+
+            if closest_idx is not None:
+                actual_time = timeline[closest_idx]
+                rmse_value = rmse[closest_idx]
+                print(f"  Window {window_size}s: RMSE = {rmse_value:.4f} (at time {actual_time}s)")
+            else:
+                print(f"  Window {window_size}s: No data point found")
+    print("=" * 60 + "\n")
+
     # Create a single figure
-    plt.figure(figsize=(12, 8))
+    fig, ax = plt.subplots(figsize=(12, 8))
 
     # Increase font size globally
     plt.rcParams.update({'font.size': 14})
 
     # Colors for different baselines - using the same color scheme as the original function
-    colors = ['blue', 'green', 'red', 'brown', 'orange', 'pink', 'gray', 'cyan']
+    colors = ['blue', 'green', 'purple', 'brown', 'orange', 'pink', 'gray', 'cyan']
 
     # Plot each baseline - first one as continuous line, others as scatter points
     for i, (timeline, rmse) in enumerate(zip(timeline_lists, rmse_lists)):
@@ -1558,14 +1802,14 @@ def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_t
 
         if i == 0:
             # First baseline as continuous line (like original baseline)
-            plt.plot(timeline, rmse, color=color, linestyle='-', label=label, linewidth=2)
+            ax.plot(timeline, rmse, color=color, linestyle='-', label=label, linewidth=2)
         else:
             # Other baselines as scatter points (like AlignNet style)
-            plt.scatter(timeline, rmse, color=color, marker='o', label=label, s=100)
+            ax.scatter(timeline, rmse, color=color, marker='o', label=label, s=100)
 
     # Plot test data if provided (scatter points like AlignNet in original function)
     if current_time_test_list is not None and rmse_test_list is not None:
-        plt.scatter(current_time_test_list, rmse_test_list, color='red', marker='o', label='AlignNet', s=100)
+        ax.scatter(current_time_test_list, rmse_test_list, color='red', marker='o', label='AlignNet', s=100)
 
     # Create tick marks for x-axis - same logic as original function
     max_time = max(max(t) for t in timeline_lists)
@@ -1582,24 +1826,139 @@ def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_t
     all_ticks = all_ticks[all_ticks <= max_time]
 
     # Set x-axis ticks with larger font
-    plt.xticks(all_ticks, fontsize=22)
+    ax.set_xticks(all_ticks)
+    ax.tick_params(axis='x', labelsize=22)
 
     # Increase y-axis tick font size
-    plt.yticks(fontsize=22)
+    ax.tick_params(axis='y', labelsize=22)
 
     # Add labels and title with larger font
-    plt.xlabel('Time [sec]', fontsize=30)
-    plt.ylabel('Alignment RMSE [deg]', fontsize=30)
+    ax.set_xlabel('Time [sec]', fontsize=30)
+    ax.set_ylabel('Alignment RMSE [deg]', fontsize=30)
 
     # Add primary grid - make sure grid aligns with actual ticks
-    plt.grid(True, which='major', linestyle='-', alpha=0.5)
+    ax.grid(True, which='major', linestyle='-', alpha=0.5)
 
     # Add special grid lines for important intervals
     for x in small_intervals:
-        plt.axvline(x=x, color='gray', linestyle=':', alpha=0.5)
+        ax.axvline(x=x, color='gray', linestyle=':', alpha=0.5)
 
-    # Add legend with larger font
-    plt.legend(fontsize=24, loc='upper right')
+    # Create inset zoom plot - handle both 2 and 3 element cases
+    if len(timeline_lists) >= 2 and len(rmse_lists) >= 2:
+        print(f"Creating zoom window for AlignNet results...")
+
+        if len(timeline_lists) == 2:
+            # Case: 2 elements - zoom on 2nd element (AlignNet)
+            alignnet_timelines = timeline_lists[1:2]  # Only 2nd dataset
+            alignnet_rmse = rmse_lists[1:2]
+            print(f"2 datasets detected - zooming on 2nd dataset (AlignNet)")
+        else:
+            # Case: 3+ elements - zoom on 2nd and 3rd elements (sim2real and AlignNet)
+            alignnet_timelines = timeline_lists[1:3]  # 2nd and 3rd datasets
+            alignnet_rmse = rmse_lists[1:3]
+            print(f"3+ datasets detected - zooming on 2nd and 3rd datasets (AlignNet - sim2real, AlignNet)")
+
+        # Combine all AlignNet data points to determine zoom region
+        all_x_points = []
+        all_y_points = []
+        for timeline, rmse in zip(alignnet_timelines, alignnet_rmse):
+            all_x_points.extend(timeline)
+            all_y_points.extend(rmse)
+
+        print(f"AlignNet data points - X: {all_x_points}, Y: {all_y_points}")
+
+        # Calculate zoom region based on AlignNet data
+        x_min, x_max = min(all_x_points), max(all_x_points)
+        y_min, y_max = min(all_y_points), max(all_y_points)
+
+        print(f"Zoom region - X: [{x_min}, {x_max}], Y: [{y_min}, {y_max}]")
+
+        # Add some padding to the zoom region (increase padding for better visibility)
+        x_padding = max(5, (x_max - x_min) * 0.2)  # At least 5 units padding
+        y_padding = max(0.5, (y_max - y_min) * 0.3)  # At least 0.5 units padding
+
+        zoom_x_min = max(0, x_min - x_padding)
+        zoom_x_max = x_max + x_padding
+        zoom_y_min = max(0, y_min - y_padding)
+        zoom_y_max = y_max + y_padding
+
+        # Create inset axes - position manually
+        # Position: [left, bottom, width, height] in axes coordinates (0-1 range)
+        axins = fig.add_axes([0.2, 0.40, 0.30, 0.25])  # Your specified position
+
+        # Plot baselines in the inset within zoom region
+        for i, (timeline, rmse) in enumerate(zip(timeline_lists, rmse_lists)):
+            color = colors[i % len(colors)]
+
+            # Filter data within zoom region
+            if i == 0:
+                # Continuous line for first baseline
+                zoom_timeline = []
+                zoom_rmse = []
+                for j, t in enumerate(timeline):
+                    if zoom_x_min <= t <= zoom_x_max:
+                        zoom_timeline.append(t)
+                        zoom_rmse.append(rmse[j])
+                if zoom_timeline:
+                    axins.plot(zoom_timeline, zoom_rmse, color=color, linestyle='-', linewidth=2)
+            else:
+                # Scatter points for other baselines
+                zoom_timeline = []
+                zoom_rmse = []
+                for j, t in enumerate(timeline):
+                    if zoom_x_min <= t <= zoom_x_max:
+                        zoom_timeline.append(t)
+                        zoom_rmse.append(rmse[j])
+                if zoom_timeline:
+                    axins.scatter(zoom_timeline, zoom_rmse, color=color, marker='o', s=120)
+
+        # Plot AlignNet data in inset - handle both 2 and 3 element cases
+        if len(timeline_lists) == 2:
+            # Case: 2 elements - plot only 2nd dataset (AlignNet)
+            zoom_range = range(1, 2)  # Only 2nd dataset
+        else:
+            # Case: 3+ elements - plot 2nd and 3rd datasets (sim2real and AlignNet)
+            zoom_range = range(1, min(3, len(timeline_lists)))  # 2nd and 3rd datasets
+
+        for i in zoom_range:
+            color = colors[i % len(colors)]
+            timeline = timeline_lists[i]
+            rmse = rmse_lists[i]
+
+            # Filter data within zoom region
+            zoom_timeline = []
+            zoom_rmse = []
+            for j, t in enumerate(timeline):
+                if zoom_x_min <= t <= zoom_x_max:
+                    zoom_timeline.append(t)
+                    zoom_rmse.append(rmse[j])
+            if zoom_timeline:
+                axins.scatter(zoom_timeline, zoom_rmse, color=color, marker='o', s=120, zorder=5)
+
+        # Set the zoom limits
+        axins.set_xlim(zoom_x_min, zoom_x_max)
+        axins.set_ylim(zoom_y_min, zoom_y_max)
+
+        # Add grid to inset
+        axins.grid(True, alpha=0.3, linewidth=0.5)
+
+        # Customize inset appearance
+        axins.tick_params(labelsize=12)
+        # axins.set_xlabel('Time [sec]', fontsize=12)
+        # axins.set_ylabel('RMSE [deg]', fontsize=12)
+        #
+        # # Add a title to the inset
+        # axins.set_title('Zoom: AlignNet Results', fontsize=12, pad=10)
+
+        # Add border around inset
+        for spine in axins.spines.values():
+            spine.set_edgecolor('black')
+            spine.set_linewidth(1.5)
+
+        # NOTE: Removed the dashed border around zoom region in main plot
+
+    # Add legend with larger font - positioned in lower right
+    ax.legend(fontsize=24, loc='lower right')
 
     # Adjust layout
     plt.tight_layout()
@@ -1682,6 +2041,8 @@ def split_data_properly(data_pd, num_sequences, sequence_length, train_size=0.6,
 def main(config):
     # Example usage
 
+    plot_trajectory_path(3)
+
     # Main variables to run the simulation
     roll_gt_deg = config['roll_gt_deg']
     pitch_gt_deg = config['pitch_gt_deg']
@@ -1704,7 +2065,7 @@ def main(config):
 
     if(config['test_type'] == 'simulated_data'):
         file_name = config['simulated_data_file_name']
-        data_pd = pd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
+        data_pd = pd.read_csv(os.path.join(data_path, "simulated_data_output", f'{file_name}'), header=None)
 
         # use for very large datasets
         #ddf = dd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
@@ -1712,7 +2073,7 @@ def main(config):
 
     elif(config['test_type'] == 'transformed_real_data'):
         file_name = config['transformed_real_data_file_name']
-        data_pd = pd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
+        data_pd = pd.read_csv(os.path.join(data_path, "transformed_real_data_output", f'{file_name}'), header=None)
         simulated_imu_from_real_gt_data_file_name = config['simulated_imu_from_real_gt_data_file_name']
         simulated_imu_from_real_gt_data_pd = pd.read_csv(os.path.join(data_path, f'{simulated_imu_from_real_gt_data_file_name}'), header=None)
     elif (config['test_type'] == 'simulated_imu_from_real_gt_data'):
@@ -1832,17 +2193,18 @@ def main(config):
             test_type = config['test_type']
             #model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_{test_type}_window_{window_size}.pth')
             #model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_window_{window_size}.pth')
-            # model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_straight_descent_22_+2_ba_real_bg_0_1_window_{window_size}.pth')
-            # model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_straight_descent_22_+0_227_ba100_bg_0_1_window_{window_size}.pth')
-            model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_transformed_real_data_traj12_22_+2_window_{window_size}.pth')
+            # model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_lawn_mower1_22_+2_ba_100_bg_0_01_window_{window_size}.pth')
+            model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_transformed_real_data_traj8_22_+2_window_{window_size}.pth')
             # Load model
             # model = SimplerIMUResNet(dropout_rate=0.3)
             model = Resnet1chDnet()
 
-            model.load_state_dict(torch.load(model_path, map_location=device))
+            print(f"model.load_state_dict")
+            model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
             model.to(device)
             model.eval()
 
+            print(f"test_loader")
             if (config['test_type'] == 'simulated_data') or (config['test_type'] == 'transformed_real_data') or (config['test_type'] == 'simulated_imu_from_real_gt_data'):
                 # Create test loader for this window size
                 test_loader = windowed_dataset(
@@ -1861,6 +2223,7 @@ def main(config):
                     shuffle=True
                 )
 
+            print(f"eval")
             # Evaluate model
             rmse = evaluate_model(
                 model, test_loader, device
@@ -1876,6 +2239,14 @@ def main(config):
     if config['test_baseline_model']:
 
         mean_rmse_svd_degrees_per_num_samples_list, svd_time_list = calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sample_freq, config)
+
+        # # movmean_window_size = 15  # Best for transformed real traj 8
+        # movmean_window_size = 1  #
+        # mean_rmse_svd_degrees_per_num_samples_list_smoothed = movmean(mean_rmse_svd_degrees_per_num_samples_list,
+        #                                                               movmean_window_size)
+        #
+        # mean_rmse_svd_degrees_per_num_samples_list = mean_rmse_svd_degrees_per_num_samples_list_smoothed
+
         # save_baseline_results_numpy(mean_rmse_svd_degrees_per_num_samples_list, svd_time_list,rmse_test_list, current_time_test_list, config)
         plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list, current_time_test_list, rmse_test_list)
 
@@ -1883,7 +2254,8 @@ def main(config):
         # print("Baseline RMSE")
         # # Create labels for the baselines (optional)
         # baseline_labels = [
-        #     f"Baseline", f"AligNet - sim2real", f"AligNet"
+        #     # f"SVD", f"AligNet - sim2real", f"AligNet"
+        #     f"SVD", f"AligNet"
         # ]
         #
         # # Plot all baselines on the same plot
@@ -1912,14 +2284,15 @@ if __name__ == '__main__':
         # 'window_sizes_sec': [5, 25, 50, 75, 100, 125, 150],
         # 'window_sizes_sec': [75],
         #'window_sizes_sec': [5,25,50,75,100,125,150,175,200],
-        # 'window_sizes_sec': [5,25],
-        'window_sizes_sec': [5,25,50,75,100],
+        'window_sizes_sec': [5],
+        # 'window_sizes_sec': [5,25,50,75,100],
         # 'window_sizes_sec': [175],
         'batch_size': 32,
-        #'simulated_dataset_len': 1612, # important!! you have to update it, from the data output file, every time you change dataset
-        #'simulated_dataset_len': 2311, # important!! you have to update it, from the data output file, every time you change dataset
-        # 'simulated_dataset_len': 2076, # - straight descent - important!! you have to update it, from the data output file, every time you change dataset
-        'simulated_dataset_len': 3234, # - lawn_mower_1 - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
+        'simulated_dataset_len': 1554, # - straight descent1 - important!! you have to update it, from the data output file, every time you change dataset
+        # 'simulated_dataset_len': 3234, # - lawn_mower_1 - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
+        # 'simulated_dataset_len': 2907, # - lawn_mower_4 - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
+        # 'simulated_dataset_len': 3703, # - lawn_mower_5 - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
+        # 'simulated_dataset_len': 1638, # - squared - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
         'real_dataset_len': 400,
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
         'test_type': 'transformed_real_data',  # Set to "real_data" or "simulated_data" or "transformed_real_data" or "simulated_imu_from_real_gt_data"
@@ -1928,15 +2301,19 @@ if __name__ == '__main__':
         'test_baseline_model': True,
         'trained_model_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work\\trained_model",
         #'simulated_data_file_name': 'simulated_data_output.csv',
-        # 'simulated_data_file_name': 'simulated_data_output_straight_descent_22_+2_ba_real_bg_0_01.csv',
+        # 'simulated_data_file_name': 'simulated_data_output_lawn_mower1_22_+2_ba_100_bg_0_01.csv',
         'simulated_data_file_name': 'simulated_data_output.csv',
         'real_data_file_name': 'real_data_output.csv',
         # 'transformed_real_data_file_name': 'transformed_real_data_output.csv',
-        # 'transformed_real_data_file_name': 'transformed_real_data_output_traj12_22_+2.csv',
+        # 'transformed_real_data_file_name': 'transformed_real_data_output_traj8_22_+2.csv',
         'transformed_real_data_file_name': 'transformed_real_data_output.csv',
         'simulated_imu_from_real_gt_data_file_name': 'simulated_imu_from_real_gt_data_output.csv',
-        'saved_baseline_results_file_name': 'baseline_results_transformed_real_data_output_traj12_22_+2',
-        'loaded_baseline_results_file_names_list': ['baseline_results_transformed_real_data_output_traj12_22_+2','sim2real_traj12_22_+2', 'real_traj12_22_+2'],
+        # 'saved_rmse_results_file_name': 'simulated_data_output_lawn_mower1_22_+2_ba_100_bg_0_01',
+        'saved_rmse_results_file_name': 'transformed_real_data_traj8_22_+2',
+        # 'saved_rmse_results_file_name': 'sim2real_transformed_real_data_traj12_22_+2',
+        # 'loaded_rmse_results_file_names_list': ['baseline_transformed_real_data_traj12_22_+0_227','sim2real_transformed_real_data_traj12_22_+0_227', 'transformed_real_data_traj12_22_+0_227'],
+        'loaded_rmse_results_file_names_list': ['baseline_simulated_data_lawn_mower1_22_+2_ba_100_bg_0_01','simulated_data_lawn_mower1_22_+2_ba_100_bg_0_01'],
+        # rmse_baseline_simulated_data_output_lawn_mower1_22_ + 0_227_ba_100_bg_0_01
         'real_imu_file_name': 'IMU_trajectory.csv',
         'real_dvl_file_name': 'DVL_trajectory.csv',
         'real_gt_file_name': 'GT_trajectory.csv'
