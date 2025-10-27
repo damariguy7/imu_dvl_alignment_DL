@@ -13,6 +13,7 @@ from torch import Tensor
 from typing import Type, Any, Callable, Union, List, Optional
 from sklearn.model_selection import train_test_split
 from math import cos, radians
+from mpl_toolkits.mplot3d import Axes3D
 import dask.dataframe as dd
 
 
@@ -50,6 +51,974 @@ __all__ = [
 #     "wide_resnet101_2": "https://download.pytorch.org/models/wide_resnet101_2-32ee1156.pth",
 # }
 
+
+def convert_lat_lon_to_meters(data):
+    """
+    Convert latitude/longitude from radians to meters (local ENU coordinates)
+    Assumes data columns are: [time, lat_rad, lon_rad, alt_m]
+    """
+    # Extract lat, lon, alt
+    lat_rad = data.iloc[:, 1].values
+    lon_rad = data.iloc[:, 2].values
+    alt_m = data.iloc[:, 3].values
+
+    # Use first point as reference (origin)
+    lat0 = lat_rad[0]
+    lon0 = lon_rad[0]
+
+    # Earth radius in meters
+    R = 6378137.0  # WGS84 equatorial radius
+
+    # Convert to local ENU coordinates (East, North, Up)
+    # East (X) - longitude difference
+    east = (lon_rad - lon0) * R * np.cos(lat0)
+
+    # North (Y) - latitude difference
+    north = (lat_rad - lat0) * R
+
+    # Up (Z) - altitude (already in meters, but negative for depth)
+    up = -alt_m  # Negative because we want depth below surface
+
+    return east, north, up
+
+
+def plot_3d_trajectory_separate(straight_data, turn_data):
+    """
+    Plot each trajectory in 3D separately - with proper coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Create two separate 3D plots
+    fig = plt.figure(figsize=(16, 6))
+
+    # Plot 1: Straight line trajectory
+    ax1 = fig.add_subplot(121, projection='3d')
+    ax1.plot(straight_x, straight_y, straight_z, 'b-', linewidth=2, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_zlabel('Depth [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (3D)')
+    ax1.legend()
+    ax1.grid(True)
+
+    # Plot 2: Turn trajectory
+    ax2 = fig.add_subplot(122, projection='3d')
+    ax2.plot(turn_x, turn_y, turn_z, 'r--', linewidth=2, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_zlabel('Depth [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (3D)')
+    ax2.legend()
+    ax2.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_individual_3d_trajectories(straight_data, turn_data):
+    """
+    Plot each trajectory in completely separate 3D figures - with coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Plot straight line trajectory
+    fig1 = plt.figure(figsize=(10, 8))
+    ax1 = fig1.add_subplot(111, projection='3d')
+    ax1.plot(straight_x, straight_y, straight_z, 'b-', linewidth=3, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_zlabel('Depth [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (3D)')
+    ax1.legend()
+    ax1.grid(True)
+    plt.show()
+
+    # Plot turn trajectory
+    fig2 = plt.figure(figsize=(10, 8))
+    ax2 = fig2.add_subplot(111, projection='3d')
+    ax2.plot(turn_x, turn_y, turn_z, 'r-', linewidth=3, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_zlabel('Depth [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (3D)')
+    ax2.legend()
+    ax2.grid(True)
+    plt.show()
+
+
+def plot_2d_trajectories_separate(straight_data, turn_data):
+    """
+    Plot each trajectory in 2D separately (X-Y only, no depth) - with coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Create two separate 2D plots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Plot 1: Straight line trajectory
+    ax1.plot(straight_x, straight_y, 'b-', linewidth=2)
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_aspect('equal', adjustable='box')
+
+    # Plot 2: Turn trajectory
+    ax2.plot(turn_x, turn_y, 'r-', linewidth=2)
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_aspect('equal', adjustable='box')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_individual_2d_trajectories(straight_data, turn_data):
+    """
+    Plot each trajectory in completely separate 2D figures (X-Y only) - with coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Plot straight line trajectory
+    fig1, ax1 = plt.subplots(figsize=(10, 8))
+    ax1.plot(straight_x, straight_y, 'b-', linewidth=3)
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (2D)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_aspect('equal', adjustable='box')
+    plt.show()
+
+    # Plot turn trajectory
+    fig2, ax2 = plt.subplots(figsize=(10, 8))
+    ax2.plot(turn_x, turn_y, 'r-', linewidth=3)
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (2D)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_aspect('equal', adjustable='box')
+    plt.show()
+
+def plot_2d_trajectories(straight_data, turn_data):
+    """
+    Optional: Create 2D plots showing X-Y, X-Z, and Y-Z projections
+    """
+    if straight_data is None or turn_data is None:
+        return
+
+    # Extract position data
+    straight_x = straight_data.iloc[:, 1].values
+    straight_y = straight_data.iloc[:, 2].values
+    straight_z = straight_data.iloc[:, 3].values
+
+    turn_x = turn_data.iloc[:, 1].values
+    turn_y = turn_data.iloc[:, 2].values
+    turn_z = turn_data.iloc[:, 3].values
+
+    # Create 2D projection plots
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+
+    # X-Y projection (top view)
+    axes[0, 0].plot(straight_x, straight_y, 'b-', linewidth=2, label='Straight line')
+    axes[0, 0].plot(turn_x, turn_y, 'r--', linewidth=2, label='Long turn')
+    axes[0, 0].set_xlabel('East [m]')
+    axes[0, 0].set_ylabel('North [m]')
+    axes[0, 0].set_title('Top View (X-Y)')
+    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].legend()
+    axes[0, 0].axis('equal')
+
+    # X-Z projection (side view)
+    axes[0, 1].plot(straight_x, straight_z, 'b-', linewidth=2, label='Straight line')
+    axes[0, 1].plot(turn_x, turn_z, 'r--', linewidth=2, label='Long turn')
+    axes[0, 1].set_xlabel('East [m]')
+    axes[0, 1].set_ylabel('Depth [m]')
+    axes[0, 1].set_title('Side View (X-Z)')
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].legend()
+
+    # Y-Z projection (front view)
+    axes[1, 0].plot(straight_y, straight_z, 'b-', linewidth=2, label='Straight line')
+    axes[1, 0].plot(turn_y, turn_z, 'r--', linewidth=2, label='Long turn')
+    axes[1, 0].set_xlabel('North [m]')
+    axes[1, 0].set_ylabel('Depth [m]')
+    axes[1, 0].set_title('Front View (Y-Z)')
+    axes[1, 0].grid(True, alpha=0.3)
+    axes[1, 0].legend()
+
+    # Time vs Z (depth profile)
+    time_straight = straight_data.iloc[:, 0].values
+    time_turn = turn_data.iloc[:, 0].values
+
+    axes[1, 1].plot(time_straight, straight_z, 'b-', linewidth=2, label='Straight line')
+    axes[1, 1].plot(time_turn, turn_z, 'r--', linewidth=2, label='Long turn')
+    axes[1, 1].set_xlabel('Time [s]')
+    axes[1, 1].set_ylabel('Depth [m]')
+    axes[1, 1].set_title('Depth Profile vs Time')
+    axes[1, 1].grid(True, alpha=0.3)
+    axes[1, 1].legend()
+
+    plt.tight_layout()
+    plt.show()
+
+#
+# def plot_accelerometer_data():
+#     """
+#     Plot accelerometer X, Y, Z values over time from IMU trajectory file.
+#
+#     Args:
+#         data_path (str): Path to the data directory
+#         file_name (str): Name of the IMU trajectory CSV file
+#     """
+#     # Construct full file path
+#     data_path = "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work"
+#     file = os.path.join(data_path, 'IMU_trajectory7.csv')
+#     file_path = os.path.join(data_path, file)
+#
+#     try:
+#         # Read the CSV file with header row
+#         df = pd.read_csv(file_path, header=0)
+#
+#         # Extract data columns
+#         time = df.iloc[:, 0].values  # First column: time [sec]
+#         acc_x = df.iloc[:, 1].values * 100  # Second column: ACC X [m/s²]
+#         acc_y = df.iloc[:, 2].values * 100  # Third column: ACC Y [m/s²]
+#         acc_z = df.iloc[:, 3].values * 100 # Fourth column: ACC Z [m/s²]
+#
+#         # Create the plot
+#         fig, ax = plt.subplots(figsize=(12, 8))
+#
+#         # Plot each accelerometer axis
+#         ax.plot(time, acc_x, 'r-', linewidth=1.5, label='ACC X')
+#         ax.plot(time, acc_y, 'g-', linewidth=1.5, label='ACC Y')
+#         ax.plot(time, acc_z, 'b-', linewidth=1.5, label='ACC Z')
+#
+#         # Set labels and title
+#         ax.set_xlabel('Time [sec]', fontsize=35)
+#         ax.set_ylabel('Specific Force [m/s²]', fontsize=35)
+#
+#         # Add grid and legend
+#         ax.grid(True, alpha=0.3)
+#         ax.legend(fontsize=35)
+#
+#         # Improve tick label size
+#         ax.tick_params(axis='both', which='major', labelsize=30)
+#
+#         # Adjust layout
+#         plt.tight_layout()
+#
+#         # Show the plot
+#         plt.show()
+#
+#         return fig, ax
+#
+#     except FileNotFoundError:
+#         print(f"Error: File {file_path} not found.")
+#         return None, None
+#     except Exception as e:
+#         print(f"Error reading file {file_path}: {str(e)}")
+#         return None, None
+#
+#
+# def plot_gyroscope_data():
+#
+#     # Construct full file path
+#     data_path = "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work"
+#     file = os.path.join(data_path, 'IMU_trajectory111.csv')
+#     file_path = os.path.join(data_path, file)
+#
+#     try:
+#         # Read the CSV file with header row
+#         df = pd.read_csv(file_path, header=0)
+#
+#         # Extract data columns
+#         time = df.iloc[:, 0].values  # First column: time [sec]
+#         gyro_x = df.iloc[:, 4].values * 100  # Second column: ACC X [m/s²]
+#         gyro_y = df.iloc[:, 5].values * 100  # Third column: ACC Y [m/s²]
+#         gyro_z = df.iloc[:, 6].values * 100 # Fourth column: ACC Z [m/s²]
+#
+#         # Create the plot
+#         fig, ax = plt.subplots(figsize=(12, 8))
+#
+#         # Plot each accelerometer axis
+#         ax.plot(time, gyro_x, 'r-', linewidth=1.5, label='GYRO X')
+#         ax.plot(time, gyro_y, 'g-', linewidth=1.5, label='GYRO Y')
+#         ax.plot(time, gyro_z, 'b-', linewidth=1.5, label='GYRO Z')
+#
+#         # Set labels and title
+#         ax.set_xlabel('Time [sec]', fontsize=35)
+#         ax.set_ylabel('Angular Rate [rad/sec]', fontsize=35)
+#
+#         # Add grid and legend - moved to lower right corner
+#         ax.grid(True, alpha=0.3)
+#         ax.legend(fontsize=20, loc='upper right')
+#
+#         # Improve tick label size
+#         ax.tick_params(axis='both', which='major', labelsize=30)
+#
+#         # Adjust layout
+#         plt.tight_layout()
+#
+#         # Show the plot
+#         plt.show()
+#
+#         return fig, ax
+#
+#     except FileNotFoundError:
+#         print(f"Error: File {file_path} not found.")
+#         return None, None
+#     except Exception as e:
+#         print(f"Error reading file {file_path}: {str(e)}")
+#         return None, None
+
+
+# def plot_gyroscope_data():
+#     """
+#     Plot gyroscope X, Y, Z values over time from IMU trajectory file.
+#
+#     Reads columns 5, 6, 7 for XYZ gyro values in rad/sec from the same IMU file.
+#     """
+#     # Construct full file path
+#     data_path = "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work"
+#     file = os.path.join(data_path, 'IMU_trajectory11.csv')
+#     file_path = os.path.join(data_path, file)
+#
+#     try:
+#         # Read the CSV file with header row
+#         df = pd.read_csv(file_path, header=0)
+#
+#         # Extract data columns
+#         time = df.iloc[:, 0].values  # First column: time [sec]
+#         gyro_x = df.iloc[:, 4].values * 100  # Fifth column: GYRO X [rad/sec]
+#         gyro_y = df.iloc[:, 5].values * 100  # Sixth column: GYRO Y [rad/sec]
+#         gyro_z = df.iloc[:, 6].values * 100  # Seventh column: GYRO Z [rad/sec]
+#
+#         # Create the plot
+#         fig, ax = plt.subplots(figsize=(12, 8))
+#
+#         # Plot each gyroscope axis
+#         ax.plot(time, gyro_x, 'r-', linewidth=1.5, label='GYRO X')
+#         ax.plot(time, gyro_y, 'g-', linewidth=1.5, label='GYRO Y')
+#         ax.plot(time, gyro_z, 'b-', linewidth=1.5, label='GYRO Z')
+#
+#         # Set labels and title
+#         ax.set_xlabel('Time [sec]', fontsize=35)
+#         ax.set_ylabel('Angular Rate [rad/sec]', fontsize=35)
+#
+#
+#         # Improve Y-axis precision
+#         # Get the data range to set appropriate tick spacing
+#         all_gyro_data = np.concatenate([gyro_x, gyro_y, gyro_z])
+#         data_min = np.min(all_gyro_data)
+#         data_max = np.max(all_gyro_data)
+#         data_range = data_max - data_min
+#
+#         # Set more precise Y-axis ticks based on data range
+#         # Gyroscope data is typically in smaller ranges than accelerometer
+#         if data_range < 0.1:
+#             # Very small range - use 0.01 spacing
+#             tick_spacing = 0.01
+#         elif data_range < 0.5:
+#             # Small range - use 0.05 spacing
+#             tick_spacing = 0.05
+#         elif data_range < 1.0:
+#             # Small-medium range - use 0.1 spacing
+#             tick_spacing = 0.1
+#         elif data_range < 5.0:
+#             # Medium range - use 0.5 spacing
+#             tick_spacing = 0.5
+#         else:
+#             # Large range - use 1.0 spacing
+#             tick_spacing = 1.0
+#
+#         # Create custom Y-axis ticks
+#         y_min = np.floor(data_min / tick_spacing) * tick_spacing
+#         y_max = np.ceil(data_max / tick_spacing) * tick_spacing
+#         y_ticks = np.arange(y_min, y_max + tick_spacing, tick_spacing)
+#
+#         ax.set_yticks(y_ticks)
+#
+#         # Format Y-axis labels with appropriate decimal precision
+#         if tick_spacing <= 0.01:
+#             ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.3f'))
+#         elif tick_spacing <= 0.1:
+#             ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.2f'))
+#         elif tick_spacing < 1:
+#             ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.1f'))
+#         else:
+#             ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f'))
+#
+#         # Add minor ticks for even finer granularity
+#         ax.yaxis.set_minor_locator(ticker.MultipleLocator(tick_spacing / 2))
+#
+#         # Add grid and legend
+#         ax.grid(True, alpha=0.3)
+#         ax.grid(True, which='minor', alpha=0.1)  # Add minor grid
+#         ax.legend(fontsize=35)
+#
+#         # Improve tick label size
+#         ax.tick_params(axis='both', which='major', labelsize=30)
+#
+#         # Adjust layout
+#         plt.tight_layout()
+#
+#         # Show the plot
+#         plt.show()
+#
+#         return fig, ax
+#
+#     except FileNotFoundError:
+#         print(f"Error: File {file_path} not found.")
+#         return None, None
+#     except Exception as e:
+#         print(f"Error reading file {file_path}: {str(e)}")
+#         return None, None
+
+def plot_simulation_trajectories():
+    """
+    Plot two simulation trajectories: straight line and turn
+
+    """
+
+    # Data path and file names
+    data_path = "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work"
+    straight_line_file = os.path.join(data_path, 'GT_trajectory11.csv')
+    long_turn_file = os.path.join(data_path, 'GT_trajectory7.csv')
+    # straight_line_file = os.path.join(data_path, 'simulation_straight_line_time_and_llh_position_gt_traj.csv')
+    # long_turn_file = os.path.join(data_path, 'simulation_long_turn_time_and_llh_position_gt_traj.csv')
+    convert_to_meters = True
+
+    try:
+        # Read the CSV files
+        straight_data = pd.read_csv(straight_line_file, header=0)
+        turn_data = pd.read_csv(long_turn_file, header=0)
+
+        print("Straight line data columns:", straight_data.columns.tolist())
+        print("Turn data columns:", turn_data.columns.tolist())
+        print("Straight line data shape:", straight_data.shape)
+        print("Turn data shape:", turn_data.shape)
+
+        # Handle coordinate conversion based on flag
+        if convert_to_meters:
+            print("Converting lat/lon coordinates to meters...")
+            # Convert lat/lon coordinates to meters for both trajectories
+            straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+            turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+        else:
+            print("Using data as-is (assuming already in meters)...")
+            # Assume data is already in meters - extract X, Y, Z columns
+            # You may need to adjust column names based on your CSV structure
+            straight_x = straight_data.iloc[:, 1].values  # Assuming X is 2nd column
+            straight_y = straight_data.iloc[:, 2].values  # Assuming Y is 3rd column
+            straight_z = straight_data.iloc[:, 3].values  # Assuming Z is 4th column
+
+            turn_x = turn_data.iloc[:, 1].values  # Assuming X is 2nd column
+            turn_y = turn_data.iloc[:, 2].values  # Assuming Y is 3rd column
+            turn_z = turn_data.iloc[:, 3].values  # Assuming Z is 4th column
+
+        # Create 2D plot (X-Y projection - top view)
+        fig, ax = plt.subplots(figsize=(12, 9))
+
+        # # Plot trajectories with different styles
+        ax.plot(straight_x, straight_y,
+                color='blue', linewidth=2, linestyle='-', label='Trajectory #1')
+
+        ax.plot(turn_x, turn_y, color='red', linewidth=2, linestyle='--')
+        ax.plot(turn_x, turn_y, color='red', linewidth=2, linestyle='--', label='Trajectory #2')
+
+        # Set labels
+        ax.set_xlabel('East[m]', fontsize=30)
+        ax.set_ylabel('North[m]', fontsize=30)
+
+        # Make axis tick labels bigger
+        ax.tick_params(axis='both', which='major', labelsize=40)
+
+        # # Add legend with position based on conversion flag
+        if convert_to_meters:
+            ax.legend(fontsize=24, loc='upper right')
+        else:
+            ax.legend(fontsize=24, loc='lower right')
+
+        # Add grid
+        ax.grid(True, alpha=0.3)
+
+        # Set equal aspect ratio for accurate representation
+        ax.set_aspect('equal', adjustable='box')
+
+        # Print trajectory statistics in meters
+        print("\n=== Trajectory Statistics (in meters) ===")
+        print(f"Straight line trajectory:")
+        print(f"  Points: {len(straight_x)}")
+        print(f"  East range: {np.min(straight_x):.2f} to {np.max(straight_x):.2f} m")
+        print(f"  North range: {np.min(straight_y):.2f} to {np.max(straight_y):.2f} m")
+        print(f"  Depth range: {np.min(straight_z):.2f} to {np.max(straight_z):.2f} m")
+
+        print(f"\nLong turn trajectory:")
+        print(f"  Points: {len(turn_x)}")
+        print(f"  East range: {np.min(turn_x):.2f} to {np.max(turn_x):.2f} m")
+        print(f"  North range: {np.min(turn_y):.2f} to {np.max(turn_y):.2f} m")
+        print(f"  Depth range: {np.min(turn_z):.2f} to {np.max(turn_z):.2f} m")
+
+        plt.tight_layout()
+        plt.show()
+
+        return straight_data, turn_data
+
+    except FileNotFoundError as e:
+        print(f"Error: Could not find file - {e}")
+        print("Please make sure the following files are in the directory:")
+        print(f"- {straight_line_file}")
+        print(f"- {long_turn_file}")
+        return None, None
+    except Exception as e:
+        print(f"Error reading or plotting data: {e}")
+        return None, None
+# def convert_lat_lon_to_meters(data):
+#     """
+#     Convert latitude/longitude from radians to meters (local ENU coordinates)
+#     Assumes data columns are: [time, lat_rad, lon_rad, alt_m]
+#     """
+#     # Extract lat, lon, alt
+#     lat_rad = data.iloc[:, 1].values
+#     lon_rad = data.iloc[:, 2].values
+#     alt_m = data.iloc[:, 3].values
+#
+#     # Use first point as reference (origin)
+#     lat0 = lat_rad[0]
+#     lon0 = lon_rad[0]
+#
+#     # Earth radius in meters
+#     R = 6378137.0  # WGS84 equatorial radius
+#
+#     # Convert to local ENU coordinates (East, North, Up)
+#     # East (X) - longitude difference
+#     east = (lon_rad - lon0) * R * np.cos(lat0)
+#
+#     # North (Y) - latitude difference
+#     north = (lat_rad - lat0) * R
+#
+#     # Up (Z) - altitude (already in meters, but negative for depth)
+#     up = -alt_m  # Negative because we want depth below surface
+#
+#     return east, north, up
+
+
+def plot_3d_trajectory_separate(straight_data, turn_data):
+    """
+    Plot each trajectory in 3D separately - with proper coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Create two separate 3D plots
+    fig = plt.figure(figsize=(16, 6))
+
+    # Plot 1: Straight line trajectory
+    ax1 = fig.add_subplot(121, projection='3d')
+    ax1.plot(straight_x, straight_y, straight_z, 'b-', linewidth=2, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_zlabel('Depth [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (3D)')
+    ax1.legend()
+    ax1.grid(True)
+
+    # Plot 2: Turn trajectory
+    ax2 = fig.add_subplot(122, projection='3d')
+    ax2.plot(turn_x, turn_y, turn_z, 'r--', linewidth=2, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_zlabel('Depth [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (3D)')
+    ax2.legend()
+    ax2.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_individual_3d_trajectories(straight_data, turn_data):
+    """
+    Plot each trajectory in completely separate 3D figures - with coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Plot straight line trajectory
+    fig1 = plt.figure(figsize=(10, 8))
+    ax1 = fig1.add_subplot(111, projection='3d')
+    ax1.plot(straight_x, straight_y, straight_z, 'b-', linewidth=3, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_zlabel('Depth [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (3D)')
+    ax1.legend()
+    ax1.grid(True)
+    plt.show()
+
+    # Plot turn trajectory
+    fig2 = plt.figure(figsize=(10, 8))
+    ax2 = fig2.add_subplot(111, projection='3d')
+    ax2.plot(turn_x, turn_y, turn_z, 'r-', linewidth=3, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_zlabel('Depth [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (3D)')
+    ax2.legend()
+    ax2.grid(True)
+    plt.show()
+
+
+def plot_2d_trajectories_separate(straight_data, turn_data):
+    """
+    Plot each trajectory in 2D separately (X-Y only, no depth) - with coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Create two separate 2D plots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Plot 1: Straight line trajectory
+    ax1.plot(straight_x, straight_y, 'b-', linewidth=2, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (2D)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_aspect('equal', adjustable='box')
+
+    # Plot 2: Turn trajectory
+    ax2.plot(turn_x, turn_y, 'r-', linewidth=2, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (2D)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_aspect('equal', adjustable='box')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_individual_2d_trajectories(straight_data, turn_data):
+    """
+    Plot each trajectory in completely separate 2D figures (X-Y only) - with coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Plot straight line trajectory
+    fig1, ax1 = plt.subplots(figsize=(10, 8))
+    ax1.plot(straight_x, straight_y, 'b-', linewidth=3, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (2D)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_aspect('equal', adjustable='box')
+    plt.show()
+
+    # Plot turn trajectory
+    fig2, ax2 = plt.subplots(figsize=(10, 8))
+    ax2.plot(turn_x, turn_y, 'r-', linewidth=3, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (2D)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_aspect('equal', adjustable='box')
+    plt.show()
+
+
+
+def convert_lat_lon_to_meters(data):
+    """
+    Convert latitude/longitude from radians to meters (local ENU coordinates)
+    Assumes data columns are: [time, lat_rad, lon_rad, alt_m]
+    """
+    # Extract lat, lon, alt
+    lat_rad = data.iloc[:, 1].values
+    lon_rad = data.iloc[:, 2].values
+    alt_m = data.iloc[:, 3].values
+
+    # Use first point as reference (origin)
+    lat0 = lat_rad[0]
+    lon0 = lon_rad[0]
+
+    # Earth radius in meters
+    R = 6378137.0  # WGS84 equatorial radius
+
+    # Convert to local ENU coordinates (East, North, Up)
+    # East (X) - longitude difference
+    east = (lon_rad - lon0) * R * np.cos(lat0)
+
+    # North (Y) - latitude difference
+    north = (lat_rad - lat0) * R
+
+    # Up (Z) - altitude (already in meters, but negative for depth)
+    up = -alt_m  # Negative because we want depth below surface
+
+    return east, north, up
+
+
+def plot_3d_trajectory_separate(straight_data, turn_data):
+    """
+    Plot each trajectory in 3D separately - with proper coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Create two separate 3D plots
+    fig = plt.figure(figsize=(16, 6))
+
+    # Plot 1: Straight line trajectory
+    ax1 = fig.add_subplot(121, projection='3d')
+    ax1.plot(straight_x, straight_y, straight_z, 'b-', linewidth=2, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_zlabel('Depth [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (3D)')
+    ax1.legend()
+    ax1.grid(True)
+
+    # Plot 2: Turn trajectory
+    ax2 = fig.add_subplot(122, projection='3d')
+    ax2.plot(turn_x, turn_y, turn_z, 'r--', linewidth=2, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_zlabel('Depth [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (3D)')
+    ax2.legend()
+    ax2.grid(True)
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_individual_3d_trajectories(straight_data, turn_data):
+    """
+    Plot each trajectory in completely separate 3D figures - with coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Plot straight line trajectory
+    fig1 = plt.figure(figsize=(10, 8))
+    ax1 = fig1.add_subplot(111, projection='3d')
+    ax1.plot(straight_x, straight_y, straight_z, 'b-', linewidth=3, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_zlabel('Depth [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (3D)')
+    ax1.legend()
+    ax1.grid(True)
+    plt.show()
+
+    # Plot turn trajectory
+    fig2 = plt.figure(figsize=(10, 8))
+    ax2 = fig2.add_subplot(111, projection='3d')
+    ax2.plot(turn_x, turn_y, turn_z, 'r-', linewidth=3, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_zlabel('Depth [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (3D)')
+    ax2.legend()
+    ax2.grid(True)
+    plt.show()
+
+
+def plot_2d_trajectories_separate(straight_data, turn_data):
+    """
+    Plot each trajectory in 2D separately (X-Y only, no depth) - with coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Create two separate 2D plots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 6))
+
+    # Plot 1: Straight line trajectory
+    ax1.plot(straight_x, straight_y, 'b-', linewidth=2, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (2D)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_aspect('equal', adjustable='box')
+
+    # Plot 2: Turn trajectory
+    ax2.plot(turn_x, turn_y, 'r-', linewidth=2, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (2D)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_aspect('equal', adjustable='box')
+
+    plt.tight_layout()
+    plt.show()
+
+
+def plot_individual_2d_trajectories(straight_data, turn_data):
+    """
+    Plot each trajectory in completely separate 2D figures (X-Y only) - with coordinate conversion
+    """
+    if straight_data is None or turn_data is None:
+        print("Error: No data available for plotting")
+        return
+
+    # Convert lat/lon coordinates to meters
+    straight_x, straight_y, straight_z = convert_lat_lon_to_meters(straight_data)
+    turn_x, turn_y, turn_z = convert_lat_lon_to_meters(turn_data)
+
+    # Plot straight line trajectory
+    fig1, ax1 = plt.subplots(figsize=(10, 8))
+    ax1.plot(straight_x, straight_y, 'b-', linewidth=3, label='Straight Line')
+    ax1.set_xlabel('East [m]')
+    ax1.set_ylabel('North [m]')
+    ax1.set_title('Trajectory #1 - Straight Line (2D)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.set_aspect('equal', adjustable='box')
+    plt.show()
+
+    # Plot turn trajectory
+    fig2, ax2 = plt.subplots(figsize=(10, 8))
+    ax2.plot(turn_x, turn_y, 'r-', linewidth=3, label='Right Turn')
+    ax2.set_xlabel('East [m]')
+    ax2.set_ylabel('North [m]')
+    ax2.set_title('Trajectory #2 - Right Turn (2D)')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    ax2.set_aspect('equal', adjustable='box')
+    plt.show()
+
+
+
+def plot_2d_trajectories(straight_data, turn_data):
+    """
+    Optional: Create 2D plots showing X-Y, X-Z, and Y-Z projections
+    """
+    if straight_data is None or turn_data is None:
+        return
+
+    # Extract position data
+    straight_x = straight_data.iloc[:, 1].values
+    straight_y = straight_data.iloc[:, 2].values
+    straight_z = straight_data.iloc[:, 3].values
+
+    turn_x = turn_data.iloc[:, 1].values
+    turn_y = turn_data.iloc[:, 2].values
+    turn_z = turn_data.iloc[:, 3].values
+
+    # Create 2D projection plots
+    fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+
+    # X-Y projection (top view)
+    axes[0, 0].plot(straight_x, straight_y, 'b-', linewidth=2, label='Straight line')
+    axes[0, 0].plot(turn_x, turn_y, 'r--', linewidth=2, label='Long turn')
+    axes[0, 0].set_xlabel('East [m]')
+    axes[0, 0].set_ylabel('North [m]')
+    axes[0, 0].set_title('Top View (X-Y)')
+    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].legend()
+    axes[0, 0].axis('equal')
+
+    # X-Z projection (side view)
+    axes[0, 1].plot(straight_x, straight_z, 'b-', linewidth=2, label='Straight line')
+    axes[0, 1].plot(turn_x, turn_z, 'r--', linewidth=2, label='Long turn')
+    axes[0, 1].set_xlabel('East [m]')
+    axes[0, 1].set_ylabel('Depth [m]')
+    axes[0, 1].set_title('Side View (X-Z)')
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].legend()
+
+    # Y-Z projection (front view)
+    axes[1, 0].plot(straight_y, straight_z, 'b-', linewidth=2, label='Straight line')
+    axes[1, 0].plot(turn_y, turn_z, 'r--', linewidth=2, label='Long turn')
+    axes[1, 0].set_xlabel('North [m]')
+    axes[1, 0].set_ylabel('Depth [m]')
+    axes[1, 0].set_title('Front View (Y-Z)')
+    axes[1, 0].grid(True, alpha=0.3)
+    axes[1, 0].legend()
+
+    # Time vs Z (depth profile)
+    time_straight = straight_data.iloc[:, 0].values
+    time_turn = turn_data.iloc[:, 0].values
+
+    axes[1, 1].plot(time_straight, straight_z, 'b-', linewidth=2, label='Straight line')
+    axes[1, 1].plot(time_turn, turn_z, 'r--', linewidth=2, label='Long turn')
+    axes[1, 1].set_xlabel('Time [s]')
+    axes[1, 1].set_ylabel('Depth [m]')
+    axes[1, 1].set_title('Depth Profile vs Time')
+    axes[1, 1].grid(True, alpha=0.3)
+    axes[1, 1].legend()
+
+    plt.tight_layout()
+    plt.show()
 
 def plot_trajectory_path(index,
                          data_path="C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work"):
@@ -817,6 +1786,7 @@ class EulerAnglesLoss(nn.Module):
 
 
 
+
 class QuaternionNormLoss(nn.Module):
     def __init__(self, norm_weight=0.1):
         super(QuaternionNormLoss, self).__init__()
@@ -1041,6 +2011,7 @@ def evaluate_model(model, test_loader, device):
     all_predictions = []
     all_targets = []
     mse_angle_list = []
+    angles_error_list = []
 
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(test_loader):
@@ -1053,25 +2024,31 @@ def evaluate_model(model, test_loader, device):
 
             # Calculate per-batch metrics
             for ii in range(len(targets_cpu)):
+                angles_error = calc_err_angles(targets_cpu[ii], outputs_cpu[ii])
+                angles_error_list.append(angles_error)
+
                 mse_angle = calc_squared_err_angles(targets_cpu[ii], outputs_cpu[ii])
                 mse_angle_list.append(mse_angle)
 
+
+
             # Store on CPU
-            all_predictions.append(outputs_cpu)
-            all_targets.append(targets_cpu)
+            # all_predictions.append(outputs_cpu)
+            # all_targets.append(targets_cpu)
 
             # Clear GPU cache periodically
             if batch_idx % 10 == 0:  # Adjust frequency as needed
                 torch.cuda.empty_cache()
 
     # Calculate metrics
-    all_predictions = np.concatenate(all_predictions)
-    all_targets = np.concatenate(all_targets)
+    # all_predictions = np.concatenate(all_predictions)
+    # all_targets = np.concatenate(all_targets)
 
+    mean_angles_error = np.mean(angles_error_list, axis=0)
     rmse = np.sqrt(np.mean(mse_angle_list))
     print(f'rmse is {rmse}')
 
-    return rmse
+    return rmse, mean_angles_error
 
 # def evaluate_model(model, test_loader, device):
 #
@@ -1439,6 +2416,25 @@ def calc_squared_err_angles(a, b):
 
     return squared_err
 
+def calc_err_angles(a, b):
+    angle_diff = np.zeros(3)
+
+    for i in range(3):
+        # Normalize both angles to [-180, 180]
+        a_norm = ((a[i] + 180) % 360) - 180
+        b_norm = ((b[i] + 180) % 360) - 180
+
+        # Calculate the absolute difference
+        diff = abs(a_norm - b_norm)
+
+        # Handle wrap-around case
+        if diff > 180:
+            diff = 360 - diff
+
+        angle_diff[i] = diff
+
+    return angle_diff
+
 
 def squared_angle_difference(a, b):
     return (min((a - b) % 360, (b - a) % 360)) ** 2
@@ -1561,12 +2557,13 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sampl
 
 
     start_num_of_samples = sample_freq*1
-    #end_num_of_samples = sample_freq*230
+    # end_num_of_samples = sample_freq*160
     # end_num_of_samples = 200
-    end_num_of_samples = dataset_len
+    end_num_of_samples = dataset_len - dataset_len % 10
     num_of_samples_slot = sample_freq*1
     rmse_svd_all_tests_by_num_of_samples_dict = {}
-    euler_rads_svd_all_tests_by_num_of_samples_dict = {}
+    angles_err_svd_all_tests_by_num_of_samples_dict = {}
+    # euler_rads_svd_all_tests_by_num_of_samples_dict = {}
     rmse_acc_gd_all_tests_by_num_of_samples_dict = {}
 
     for test_idx, test_sequence in enumerate(v_imu_dvl_test_series_list):
@@ -1588,6 +2585,8 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sampl
             euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled.T, v_dvl_sampled.T)
             euler_angles_svd_degrees = np.degrees(euler_angles_svd_rads)
             svd_squared_err_angles = calc_squared_err_angles(np.array(euler_angles_svd_degrees), euler_body_dvl_gt)
+            svd_err_angles = calc_err_angles(np.array(euler_angles_svd_degrees), euler_body_dvl_gt)
+
 
             # euler_angles_acc_gd_rads = run_acc_gradient_descent(v_imu_sampled.T, v_dvl_sampled.T, omega_skew_ned_to_body_rad_sampled, est_acc_eb_b_sampled.T)
             # euler_angles_acc_gd_degrees = np.degrees(euler_angles_acc_gd_rads)
@@ -1596,7 +2595,8 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sampl
             # Store in dictionary
             if num_samples not in rmse_svd_all_tests_by_num_of_samples_dict:
                 rmse_svd_all_tests_by_num_of_samples_dict[num_samples] = []
-                euler_rads_svd_all_tests_by_num_of_samples_dict[num_samples] = []
+                angles_err_svd_all_tests_by_num_of_samples_dict[num_samples] = []
+                # euler_rads_svd_all_tests_by_num_of_samples_dict[num_samples] = []
 
             # # Store in dictionary
             # if num_samples not in rmse_acc_gd_all_tests_by_num_of_samples_dict:
@@ -1604,16 +2604,22 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sampl
 
 
 
-            rmse_svd_all_tests_by_num_of_samples_dict[num_samples].append(svd_squared_err_angles)
-            euler_rads_svd_all_tests_by_num_of_samples_dict[num_samples].append(euler_angles_svd_rads)
+            # rmse_svd_all_tests_by_num_of_samples_dict[num_samples].append(svd_squared_err_angles)
+            rmse_svd_all_tests_by_num_of_samples_dict[num_samples].append(np.sum(svd_squared_err_angles) / 3)
+            angles_err_svd_all_tests_by_num_of_samples_dict[num_samples].append(svd_err_angles)
+            # euler_rads_svd_all_tests_by_num_of_samples_dict[num_samples].append(euler_angles_svd_rads)
             # rmse_acc_gd_all_tests_by_num_of_samples_dict[num_samples].append(acc_gd_squared_err_angles)
 
     mean_rmse_svd_degrees_per_num_samples_list = []
-    mean_rmse_acc_gd_degrees_per_num_samples_list = []
+    mean_angles_error_svd_degrees_per_num_samples_list = []
+    # mean_rmse_acc_gd_degrees_per_num_samples_list = []
 
     for num_samples in range(start_num_of_samples, end_num_of_samples, num_of_samples_slot):
-        mean_euler_angles_svd_per_num_samples = np.mean(rmse_svd_all_tests_by_num_of_samples_dict[num_samples])
-        mean_rmse_svd_degrees_per_num_samples_list.append(np.sqrt(mean_euler_angles_svd_per_num_samples))
+        mean_angles_error_svd_per_num_samples = np.mean(angles_err_svd_all_tests_by_num_of_samples_dict[num_samples], axis=0)
+        mean_angles_error_svd_degrees_per_num_samples_list.append(mean_angles_error_svd_per_num_samples)
+
+        mean_squared_error_angles_svd_per_num_samples = np.mean(rmse_svd_all_tests_by_num_of_samples_dict[num_samples])
+        mean_rmse_svd_degrees_per_num_samples_list.append(np.sqrt(mean_squared_error_angles_svd_per_num_samples))
 
         # mean_euler_angles_acc_gd_per_num_samples = np.mean(rmse_acc_gd_all_tests_by_num_of_samples_dict[num_samples])
         # mean_rmse_acc_gd_degrees_per_num_samples_list.append(np.sqrt(mean_euler_angles_acc_gd_per_num_samples))
@@ -1622,9 +2628,10 @@ def calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sampl
     svd_time_list = list(range(start_num_of_samples//sample_freq, (end_num_of_samples)//sample_freq, num_of_samples_slot//sample_freq))
 
     for window in window_sizes_sec:
-        print(f'window {window} is:{mean_rmse_svd_degrees_per_num_samples_list[window // (num_of_samples_slot//sample_freq)]}')
+        print(f'mean rmse svd window {window} is:{mean_rmse_svd_degrees_per_num_samples_list[window // (num_of_samples_slot//sample_freq)]}')
+        print(f'mean angles error svd window {window} is:{mean_angles_error_svd_degrees_per_num_samples_list[window // (num_of_samples_slot//sample_freq)]}')
 
-    return mean_rmse_svd_degrees_per_num_samples_list, svd_time_list
+    return mean_rmse_svd_degrees_per_num_samples_list, mean_angles_error_svd_degrees_per_num_samples_list, svd_time_list
 
 
 def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list,
@@ -1742,6 +2749,69 @@ def plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degree
     plt.show(block=False)
 
 
+def plot_results_graph_angle_me_net_and_angle_me_svd(svd_time_list,
+                                                     mean_mean_error_angles_svd_degrees_per_num_samples_list,
+                                                     current_time_test_list, mean_error_angles_test_list):
+    # Create a single figure for individual angle errors
+    fig, ax = plt.subplots(figsize=(12, 8))
+
+    # Increase font size globally
+    plt.rcParams.update({'font.size': 14})
+
+    # Convert lists to numpy arrays for easier indexing
+    svd_errors = np.array(mean_mean_error_angles_svd_degrees_per_num_samples_list)
+    test_errors = np.array(mean_error_angles_test_list)
+
+    # Define colors and labels for each angle
+    angle_names = ['Roll', 'Pitch', 'Yaw']
+    colors = ['red', 'green', 'blue']
+
+    # Plot each angle error for SVD baseline
+    for i in range(3):
+        ax.plot(svd_time_list, svd_errors[:, i], color=colors[i], linestyle='-',
+                label=f'SVD {angle_names[i]}', linewidth=2, alpha=0.7)
+
+    # Plot each angle error for AlignNet
+    for i in range(3):
+        ax.scatter(current_time_test_list, test_errors[:, i], color=colors[i],
+                   marker='o', label=f'AlignNet {angle_names[i]}', s=100,
+                   edgecolors='black', linewidth=1)
+
+    # Create tick marks that align with both datasets
+    small_intervals = np.array([5, 25, 50, 75])
+    max_time = max(max(svd_time_list), max(current_time_test_list))
+    large_intervals = np.arange(0, max_time, 50)
+    all_ticks = np.unique(np.concatenate([small_intervals, large_intervals]))
+
+    # Remove 0 from the ticks while keeping it for grid lines
+    display_ticks = all_ticks[all_ticks != 0]
+
+    # Set x-axis ticks with larger font (excluding 0)
+    ax.set_xticks(display_ticks)
+    ax.tick_params(axis='x', labelsize=22)
+    ax.tick_params(axis='y', labelsize=22)
+
+    # Add labels and title with larger font
+    ax.set_xlabel('Time [sec]', fontsize=30)
+    ax.set_ylabel('Mean Alignment Error [deg]', fontsize=30)
+
+    # Add primary grid - this will still include the 0 line for the grid
+    ax.grid(True, which='major', linestyle='-', alpha=0.5)
+
+    # Add special grid lines for important intervals
+    for x in small_intervals:
+        ax.axvline(x=x, color='gray', linestyle=':', alpha=0.5)
+
+    # Add legend with larger font - you might want to adjust location due to more entries
+    ax.legend(fontsize=20, loc='upper right', ncol=2)
+
+    # Adjust layout
+    plt.tight_layout()
+
+    # Show plot
+    plt.show(block=False)
+
+# load plots for real data
 def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_time_test_list=None,
                               rmse_test_list=None):
     """
@@ -1792,24 +2862,29 @@ def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_t
     # Increase font size globally
     plt.rcParams.update({'font.size': 14})
 
-    # Colors for different baselines - using the same color scheme as the original function
-    colors = ['blue', 'green', 'purple', 'brown', 'orange', 'pink', 'gray', 'cyan']
+    # Colors for different baselines
+    colors = ['blue', 'green', 'red']
 
-    # Plot each baseline - first one as continuous line, others as scatter points
-    for i, (timeline, rmse) in enumerate(zip(timeline_lists, rmse_lists)):
-        color = colors[i % len(colors)]
-        label = labels[i] if labels is not None and i < len(labels) else f'Baseline {i + 1}'
+    # Define the plotting order for 3 datasets: first, second, third (indices 0, 1, 2)
+    plot_order = list(range(min(3, len(timeline_lists))))  # Handle up to 3 datasets
 
-        if i == 0:
-            # First baseline as continuous line (like original baseline)
-            ax.plot(timeline, rmse, color=color, linestyle='-', label=label, linewidth=2)
-        else:
-            # Other baselines as scatter points (like AlignNet style)
-            ax.scatter(timeline, rmse, color=color, marker='o', label=label, s=100)
+    # Plot each baseline - first as continuous line, others as scatter points
+    for plot_idx in plot_order:
+        if plot_idx < len(timeline_lists):
+            timeline = timeline_lists[plot_idx]
+            rmse = rmse_lists[plot_idx]
+            color = colors[plot_idx % len(colors)]
+            label = labels[plot_idx] if labels is not None and plot_idx < len(labels) else f'Baseline {plot_idx + 1}'
+
+            if plot_idx == 0:  # First (index 0) as continuous line
+                ax.plot(timeline, rmse, color=color, linestyle='-', label=label, linewidth=2)
+            else:  # Others (indices 1, 2) as scatter points
+                ax.scatter(timeline, rmse, color=color, marker='o', label=label, s=250)  # Reduced from 60 to 30
 
     # Plot test data if provided (scatter points like AlignNet in original function)
     if current_time_test_list is not None and rmse_test_list is not None:
-        ax.scatter(current_time_test_list, rmse_test_list, color='red', marker='o', label='AlignNet', s=100)
+        ax.scatter(current_time_test_list, rmse_test_list, color='red', marker='o', label='AlignNet',
+                   s=250)  # Reduced from 60 to 30
 
     # Create tick marks for x-axis - same logic as original function
     max_time = max(max(t) for t in timeline_lists)
@@ -1818,8 +2893,8 @@ def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_t
 
     # Small intervals for important points
     small_intervals = np.array([5, 25, 50, 75])
-    # Large intervals for regular spacing
-    large_intervals = np.arange(0, max_time + 50, 50)  # 0 to max_time in steps of 50
+    # Large intervals for regular spacing - exclude 0
+    large_intervals = np.arange(50, max_time + 50, 50)  # Start from 50 instead of 0
 
     # Combine and ensure all ticks are unique and sorted
     all_ticks = np.unique(np.concatenate([small_intervals, large_intervals]))
@@ -1827,14 +2902,14 @@ def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_t
 
     # Set x-axis ticks with larger font
     ax.set_xticks(all_ticks)
-    ax.tick_params(axis='x', labelsize=22)
+    ax.tick_params(axis='x', labelsize=40)
 
     # Increase y-axis tick font size
-    ax.tick_params(axis='y', labelsize=22)
+    ax.tick_params(axis='y', labelsize=40)
 
     # Add labels and title with larger font
-    ax.set_xlabel('Time [sec]', fontsize=30)
-    ax.set_ylabel('Alignment RMSE [deg]', fontsize=30)
+    ax.set_xlabel('Time [sec]', fontsize=40)
+    ax.set_ylabel('Alignment RMSE [deg]', fontsize=40)
 
     # Add primary grid - make sure grid aligns with actual ticks
     ax.grid(True, which='major', linestyle='-', alpha=0.5)
@@ -1843,128 +2918,397 @@ def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_t
     for x in small_intervals:
         ax.axvline(x=x, color='gray', linestyle=':', alpha=0.5)
 
-    # Create inset zoom plot - handle both 2 and 3 element cases
-    if len(timeline_lists) >= 2 and len(rmse_lists) >= 2:
-        print(f"Creating zoom window for AlignNet results...")
+    # Create inset zoom plot - focus on second and third baselines at specific times
+    zoom_times = [5, 25, 50, 75, 100]
+    zoom_indices = [1, 2]  # Second and third baselines (0-indexed)
 
-        if len(timeline_lists) == 2:
-            # Case: 2 elements - zoom on 2nd element (AlignNet)
-            alignnet_timelines = timeline_lists[1:2]  # Only 2nd dataset
-            alignnet_rmse = rmse_lists[1:2]
-            print(f"2 datasets detected - zooming on 2nd dataset (AlignNet)")
-        else:
-            # Case: 3+ elements - zoom on 2nd and 3rd elements (sim2real and AlignNet)
-            alignnet_timelines = timeline_lists[1:3]  # 2nd and 3rd datasets
-            alignnet_rmse = rmse_lists[1:3]
-            print(f"3+ datasets detected - zooming on 2nd and 3rd datasets (AlignNet - sim2real, AlignNet)")
+    if len(timeline_lists) >= 3:  # Ensure we have at least 3 baselines
+        print(f"Creating zoom window for baselines {zoom_indices} at times {zoom_times}...")
 
-        # Combine all AlignNet data points to determine zoom region
-        all_x_points = []
-        all_y_points = []
-        for timeline, rmse in zip(alignnet_timelines, alignnet_rmse):
-            all_x_points.extend(timeline)
-            all_y_points.extend(rmse)
+        # Collect zoom data points
+        all_zoom_x = []
+        all_zoom_y = []
 
-        print(f"AlignNet data points - X: {all_x_points}, Y: {all_y_points}")
+        for idx in zoom_indices:
+            if idx < len(timeline_lists):
+                timeline = timeline_lists[idx]
+                rmse = rmse_lists[idx]
 
-        # Calculate zoom region based on AlignNet data
-        x_min, x_max = min(all_x_points), max(all_x_points)
-        y_min, y_max = min(all_y_points), max(all_y_points)
+                # Find data points closest to zoom times
+                for target_time in zoom_times:
+                    closest_idx = None
+                    min_diff = float('inf')
+                    for j, time_point in enumerate(timeline):
+                        diff = abs(time_point - target_time)
+                        if diff < min_diff:
+                            min_diff = diff
+                            closest_idx = j
 
-        print(f"Zoom region - X: [{x_min}, {x_max}], Y: [{y_min}, {y_max}]")
+                    if closest_idx is not None:
+                        all_zoom_x.append(timeline[closest_idx])
+                        all_zoom_y.append(rmse[closest_idx])
 
-        # Add some padding to the zoom region (increase padding for better visibility)
-        x_padding = max(5, (x_max - x_min) * 0.2)  # At least 5 units padding
-        y_padding = max(0.5, (y_max - y_min) * 0.3)  # At least 0.5 units padding
+        if all_zoom_x and all_zoom_y:
+            # Calculate zoom region
+            x_min, x_max = min(all_zoom_x), max(all_zoom_x)
+            y_min, y_max = min(all_zoom_y), max(all_zoom_y)
 
-        zoom_x_min = max(0, x_min - x_padding)
-        zoom_x_max = x_max + x_padding
-        zoom_y_min = max(0, y_min - y_padding)
-        zoom_y_max = y_max + y_padding
+            print(f"Zoom region - X: [{x_min}, {x_max}], Y: [{y_min}, {y_max}]")
 
-        # Create inset axes - position manually
-        # Position: [left, bottom, width, height] in axes coordinates (0-1 range)
-        axins = fig.add_axes([0.2, 0.40, 0.30, 0.25])  # Your specified position
+            # Add padding to the zoom region
+            x_padding = max(5, (x_max - x_min) * 0.2)
+            y_padding = max(0.5, (y_max - y_min) * 0.3)
 
-        # Plot baselines in the inset within zoom region
-        for i, (timeline, rmse) in enumerate(zip(timeline_lists, rmse_lists)):
-            color = colors[i % len(colors)]
+            zoom_x_min = max(0, x_min - x_padding)
+            zoom_x_max = x_max + x_padding
+            zoom_y_min = max(0, y_min - y_padding)
+            zoom_y_max = y_max + y_padding
 
-            # Filter data within zoom region
-            if i == 0:
-                # Continuous line for first baseline
-                zoom_timeline = []
-                zoom_rmse = []
+            # Create inset axes - positioned higher and moved further right
+            axins = fig.add_axes([0.55, 0.65, 0.30, 0.25])  # Moved from x=0.35 to x=0.45 and y=0.55 to y=0.65
+
+            # Plot the specified baselines in the inset within zoom region
+            for i in zoom_indices:
+                if i < len(timeline_lists):
+                    timeline = timeline_lists[i]
+                    rmse = rmse_lists[i]
+                    color = colors[i % len(colors)]
+
+                    # Filter data within zoom region
+                    zoom_timeline = []
+                    zoom_rmse = []
+                    for j, t in enumerate(timeline):
+                        if zoom_x_min <= t <= zoom_x_max:
+                            zoom_timeline.append(t)
+                            zoom_rmse.append(rmse[j])
+
+                    if zoom_timeline:
+                        # All zoom datasets as scatter points since they're indices 1 and 2
+                        axins.scatter(zoom_timeline, zoom_rmse, color=color, marker='o', s=250)  # Reduced from 80 to 40
+
+            # Also plot the first dataset (index 0) if it has data points within the zoom region
+            if len(timeline_lists) >= 1:
+                timeline = timeline_lists[0]
+                rmse = rmse_lists[0]
+                color = colors[0 % len(colors)]
+
+                # Filter data within zoom region for the first dataset
+                zoom_timeline_first = []
+                zoom_rmse_first = []
                 for j, t in enumerate(timeline):
                     if zoom_x_min <= t <= zoom_x_max:
-                        zoom_timeline.append(t)
-                        zoom_rmse.append(rmse[j])
-                if zoom_timeline:
-                    axins.plot(zoom_timeline, zoom_rmse, color=color, linestyle='-', linewidth=2)
-            else:
-                # Scatter points for other baselines
-                zoom_timeline = []
-                zoom_rmse = []
-                for j, t in enumerate(timeline):
-                    if zoom_x_min <= t <= zoom_x_max:
-                        zoom_timeline.append(t)
-                        zoom_rmse.append(rmse[j])
-                if zoom_timeline:
-                    axins.scatter(zoom_timeline, zoom_rmse, color=color, marker='o', s=120)
+                        zoom_timeline_first.append(t)
+                        zoom_rmse_first.append(rmse[j])
 
-        # Plot AlignNet data in inset - handle both 2 and 3 element cases
-        if len(timeline_lists) == 2:
-            # Case: 2 elements - plot only 2nd dataset (AlignNet)
-            zoom_range = range(1, 2)  # Only 2nd dataset
-        else:
-            # Case: 3+ elements - plot 2nd and 3rd datasets (sim2real and AlignNet)
-            zoom_range = range(1, min(3, len(timeline_lists)))  # 2nd and 3rd datasets
+                if zoom_timeline_first:
+                    # Plot first dataset as continuous line (same style as main plot)
+                    axins.plot(zoom_timeline_first, zoom_rmse_first, color=color, linestyle='-', linewidth=2)
 
-        for i in zoom_range:
-            color = colors[i % len(colors)]
-            timeline = timeline_lists[i]
-            rmse = rmse_lists[i]
+            # Set the zoom limits
+            axins.set_xlim(zoom_x_min, zoom_x_max)
+            axins.set_ylim(zoom_y_min, zoom_y_max)
 
-            # Filter data within zoom region
-            zoom_timeline = []
-            zoom_rmse = []
-            for j, t in enumerate(timeline):
-                if zoom_x_min <= t <= zoom_x_max:
-                    zoom_timeline.append(t)
-                    zoom_rmse.append(rmse[j])
-            if zoom_timeline:
-                axins.scatter(zoom_timeline, zoom_rmse, color=color, marker='o', s=120, zorder=5)
+            # Set custom x-axis ticks to include 25, 50, 75, 100
+            zoom_x_ticks = [25, 50, 75, 100]
+            # Filter to only include ticks within the zoom region
+            zoom_x_ticks = [tick for tick in zoom_x_ticks if zoom_x_min <= tick <= zoom_x_max]
 
-        # Set the zoom limits
-        axins.set_xlim(zoom_x_min, zoom_x_max)
-        axins.set_ylim(zoom_y_min, zoom_y_max)
+            # Add any existing data points that might be important
+            existing_x_values = list(set(all_zoom_x))
+            for x_val in existing_x_values:
+                if zoom_x_min <= x_val <= zoom_x_max and x_val not in zoom_x_ticks:
+                    # Only add if it's reasonably spaced from existing ticks
+                    min_distance = min([abs(x_val - tick) for tick in zoom_x_ticks] + [float('inf')])
+                    if min_distance > 5:  # At least 5 units apart
+                        zoom_x_ticks.append(x_val)
 
-        # Add grid to inset
-        axins.grid(True, alpha=0.3, linewidth=0.5)
+            zoom_x_ticks = sorted(zoom_x_ticks)
+            axins.set_xticks(zoom_x_ticks)
 
-        # Customize inset appearance
-        axins.tick_params(labelsize=12)
-        # axins.set_xlabel('Time [sec]', fontsize=12)
-        # axins.set_ylabel('RMSE [deg]', fontsize=12)
-        #
-        # # Add a title to the inset
-        # axins.set_title('Zoom: AlignNet Results', fontsize=12, pad=10)
+            # Add grid to inset - this will now align with the custom x-axis ticks
+            axins.grid(True, alpha=0.3, linewidth=0.5)
 
-        # Add border around inset
-        for spine in axins.spines.values():
-            spine.set_edgecolor('black')
-            spine.set_linewidth(1.5)
+            # Add vertical grid lines specifically for the key values
+            key_grid_values = [25, 50, 75, 100]
+            for grid_val in key_grid_values:
+                if zoom_x_min <= grid_val <= zoom_x_max:
+                    axins.axvline(x=grid_val, color='gray', linestyle=':', alpha=0.7, linewidth=1)
 
-        # NOTE: Removed the dashed border around zoom region in main plot
+            # Customize inset appearance with more precise y-axis
+            axins.tick_params(labelsize=35)
 
-    # Add legend with larger font - positioned in lower right
-    ax.legend(fontsize=24, loc='lower right')
+            # Format y-axis to show more decimal precision
+            import matplotlib.ticker as ticker
+            axins.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.3f'))
+
+            # Increase number of y-axis ticks for better precision
+            axins.yaxis.set_major_locator(ticker.MaxNLocator(nbins=6, prune=None))
+
+            # Add border around inset
+            for spine in axins.spines.values():
+                spine.set_edgecolor('black')
+                spine.set_linewidth(1.5)
+
+    # Add legend with smaller font - positioned lower to avoid overlap with graph
+    legend = ax.legend(fontsize=30, loc='lower right')
+    # Manually adjust legend position to be lower
+    legend.set_bbox_to_anchor((1.0, 0.0))
 
     # Adjust layout
     plt.tight_layout()
 
     # Show plot
     plt.show(block=False)
+
+
+
+# load plots for simulated data
+#
+# def plot_all_baseline_results(timeline_lists, rmse_lists, labels=None, current_time_test_list=None,
+#                               rmse_test_list=None):
+#     """
+#     Enhanced version with inset zoom capability.
+#     Plot multiple baseline results on the same plot with the same style as plot_results_graph_rmse_net_and_rmse_svd.
+#
+#     Args:
+#         timeline_lists: List of lists containing timeline data for each baseline
+#         rmse_lists: List of lists containing RMSE data for each baseline
+#         labels: Optional list of labels for each baseline
+#         current_time_test_list: Optional list of window sizes for test data
+#         rmse_test_list: Optional list of RMSE values for test data
+#     """
+#     # Import required modules
+#     from matplotlib.patches import Rectangle
+#     import matplotlib.pyplot as plt
+#     import numpy as np
+#     import matplotlib.ticker as ticker
+#
+#     # Define window sizes to print values for
+#     window_sizes_sec = [5, 25, 50, 75, 100]
+#
+#     # Print RMSE values at specific window sizes for all datasets
+#     print("\n" + "=" * 60)
+#     print("RMSE VALUES AT SPECIFIC WINDOW SIZES")
+#     print("=" * 60)
+#     for i, (timeline, rmse, label) in enumerate(
+#             zip(timeline_lists, rmse_lists, labels or [f"Dataset {i + 1}" for i in range(len(timeline_lists))])):
+#         print(f"\n{label}:")
+#         for window_size in window_sizes_sec:
+#             # Find the closest timeline point to the window size
+#             closest_idx = None
+#             min_diff = float('inf')
+#             for j, time_point in enumerate(timeline):
+#                 diff = abs(time_point - window_size)
+#                 if diff < min_diff:
+#                     min_diff = diff
+#                     closest_idx = j
+#
+#             if closest_idx is not None:
+#                 actual_time = timeline[closest_idx]
+#                 rmse_value = rmse[closest_idx]
+#                 print(f"  Window {window_size}s: RMSE = {rmse_value:.4f} (at time {actual_time}s)")
+#             else:
+#                 print(f"  Window {window_size}s: No data point found")
+#     print("=" * 60 + "\n")
+#
+#     # Create a single figure
+#     fig, ax = plt.subplots(figsize=(12, 8))
+#
+#     # Increase font size globally
+#     plt.rcParams.update({'font.size': 14})
+#
+#     # Colors for different baselines
+#     colors = ['blue', 'blue', 'green', 'green']
+#
+#     # Define the plotting order: first, third, second, fourth (indices 0, 2, 1, 3)
+#     plot_order = [0, 2, 1, 3]
+#
+#     # Plot each baseline in the specified order - first and third as continuous lines, others as scatter points
+#     for plot_idx in plot_order:
+#         if plot_idx < len(timeline_lists):
+#             timeline = timeline_lists[plot_idx]
+#             rmse = rmse_lists[plot_idx]
+#             color = colors[plot_idx % len(colors)]
+#             label = labels[plot_idx] if labels is not None and plot_idx < len(labels) else f'Baseline {plot_idx + 1}'
+#
+#             if plot_idx == 0 or plot_idx == 2:  # First (index 0) and third (index 2) as continuous lines
+#                 ax.plot(timeline, rmse, color=color, linestyle='-', label=label, linewidth=2)
+#             else:  # Others as scatter points
+#                 ax.scatter(timeline, rmse, color=color, marker='o', label=label, s=250)  # Reduced from 60 to 30
+#
+#     # Plot test data if provided (scatter points like AlignNet in original function)
+#     if current_time_test_list is not None and rmse_test_list is not None:
+#         ax.scatter(current_time_test_list, rmse_test_list, color='red', marker='o', label='AlignNet',
+#                    s=250)  # Reduced from 60 to 30
+#
+#     # Create tick marks for x-axis - same logic as original function
+#     max_time = max(max(t) for t in timeline_lists)
+#     if current_time_test_list:
+#         max_time = max(max_time, max(current_time_test_list))
+#
+#     # Small intervals for important points
+#     small_intervals = np.array([5, 25, 50, 75])
+#     # Large intervals for regular spacing - exclude 0
+#     large_intervals = np.arange(50, max_time + 50, 50)  # Start from 50 instead of 0
+#
+#     # Combine and ensure all ticks are unique and sorted
+#     all_ticks = np.unique(np.concatenate([small_intervals, large_intervals]))
+#     all_ticks = all_ticks[all_ticks <= max_time]
+#
+#     # Set x-axis ticks with larger font
+#     ax.set_xticks(all_ticks)
+#     ax.tick_params(axis='x', labelsize=40)
+#
+#     # Increase y-axis tick font size
+#     ax.tick_params(axis='y', labelsize=40)
+#
+#     # Add labels and title with larger font
+#     ax.set_xlabel('Time [sec]', fontsize=40)
+#     ax.set_ylabel('Alignment RMSE [deg]', fontsize=40)
+#
+#     # Add primary grid - make sure grid aligns with actual ticks
+#     ax.grid(True, which='major', linestyle='-', alpha=0.5)
+#
+#     # Add special grid lines for important intervals
+#     for x in small_intervals:
+#         ax.axvline(x=x, color='gray', linestyle=':', alpha=0.5)
+#
+#     # Create inset zoom plot - focus on second and fourth baselines at specific times
+#     zoom_times = [5, 25, 50, 75, 100]
+#     zoom_focus_indices = [1, 3]  # Second and fourth baselines (0-indexed) - these determine zoom region
+#     zoom_additional_indices = [0, 2]  # First and third baselines (0-indexed) - these are shown if they appear in zoom
+#
+#     if len(timeline_lists) >= 4:  # Ensure we have at least 4 baselines
+#         print(
+#             f"Creating zoom window focused on baselines {zoom_focus_indices} with additional baselines {zoom_additional_indices} if present...")
+#
+#         # Collect zoom data points ONLY from focus indices (second and fourth) to determine zoom region
+#         all_zoom_x = []
+#         all_zoom_y = []
+#
+#         for idx in zoom_focus_indices:
+#             if idx < len(timeline_lists):
+#                 timeline = timeline_lists[idx]
+#                 rmse = rmse_lists[idx]
+#
+#                 # Find data points closest to zoom times
+#                 for target_time in zoom_times:
+#                     closest_idx = None
+#                     min_diff = float('inf')
+#                     for j, time_point in enumerate(timeline):
+#                         diff = abs(time_point - target_time)
+#                         if diff < min_diff:
+#                             min_diff = diff
+#                             closest_idx = j
+#
+#                     if closest_idx is not None:
+#                         all_zoom_x.append(timeline[closest_idx])
+#                         all_zoom_y.append(rmse[closest_idx])
+#
+#         if all_zoom_x and all_zoom_y:
+#             # Calculate zoom region based ONLY on focus datasets (second and fourth)
+#             x_min, x_max = min(all_zoom_x), max(all_zoom_x)
+#             y_min, y_max = min(all_zoom_y), max(all_zoom_y)
+#
+#             print(f"Zoom region based on focus datasets - X: [{x_min}, {x_max}], Y: [{y_min}, {y_max}]")
+#
+#             # Add padding to the zoom region
+#             x_padding = max(5, (x_max - x_min) * 0.2)
+#             y_padding = max(0.5, (y_max - y_min) * 0.3)
+#
+#             zoom_x_min = max(0, x_min - x_padding)
+#             zoom_x_max = x_max + x_padding
+#
+#             # Set Y-axis to start from 0 and include more lower values than higher values
+#             zoom_y_min = 0  # Always start from 0
+#             # Add modest padding above the maximum values
+#             zoom_y_max = y_max + y_padding
+#
+#             # Create inset axes - keep original position and scale
+#             axins = fig.add_axes([0.3, 0.65, 0.30, 0.25])  # Original position and scale
+#
+#             # First plot the focus baselines (second and fourth) in the inset
+#             for i in zoom_focus_indices:
+#                 if i < len(timeline_lists):
+#                     timeline = timeline_lists[i]
+#                     rmse = rmse_lists[i]
+#                     color = colors[i % len(colors)]
+#
+#                     # Filter data within zoom region
+#                     zoom_timeline = []
+#                     zoom_rmse = []
+#                     for j, t in enumerate(timeline):
+#                         if zoom_x_min <= t <= zoom_x_max:
+#                             zoom_timeline.append(t)
+#                             zoom_rmse.append(rmse[j])
+#
+#                     if zoom_timeline:
+#                         # Plot as scatter points (since indices 1 and 3 are scatter in main plot)
+#                         axins.scatter(zoom_timeline, zoom_rmse, color=color, marker='o', s=250)
+#
+#             # Then check if additional baselines (first and third) have data in the zoom region and plot them
+#             for i in zoom_additional_indices:
+#                 if i < len(timeline_lists):
+#                     timeline = timeline_lists[i]
+#                     rmse = rmse_lists[i]
+#                     color = colors[i % len(colors)]
+#
+#                     # Filter data within zoom region
+#                     zoom_timeline = []
+#                     zoom_rmse = []
+#                     for j, t in enumerate(timeline):
+#                         if zoom_x_min <= t <= zoom_x_max:
+#                             zoom_timeline.append(t)
+#                             zoom_rmse.append(rmse[j])
+#
+#                     if zoom_timeline:
+#                         # Plot as continuous lines (since indices 0 and 2 are lines in main plot)
+#                         axins.plot(zoom_timeline, zoom_rmse, color=color, linestyle='-', linewidth=2)
+#                         print(f"Added baseline {i} to zoom window (found {len(zoom_timeline)} data points)")
+#
+#             # Set the zoom limits
+#             axins.set_xlim(zoom_x_min, zoom_x_max)
+#             axins.set_ylim(zoom_y_min, zoom_y_max)
+#
+#             # Set custom X-axis ticks for zoom window
+#             custom_x_ticks = [5, 25, 50, 75, 100]
+#             # Filter ticks that are within the zoom region
+#             visible_x_ticks = [tick for tick in custom_x_ticks if zoom_x_min <= tick <= zoom_x_max]
+#             axins.set_xticks(visible_x_ticks)
+#
+#             # Add grid to inset
+#             axins.grid(True, alpha=0.3, linewidth=0.5)
+#
+#             # Add vertical grid lines specifically for the key values
+#             key_grid_values = [25, 50, 75, 100]
+#             for grid_val in key_grid_values:
+#                 if zoom_x_min <= grid_val <= zoom_x_max:
+#                     axins.axvline(x=grid_val, color='gray', linestyle=':', alpha=0.7, linewidth=1)
+#
+#             # Customize inset appearance with more precise y-axis
+#             axins.tick_params(labelsize=35)
+#
+#             # Format y-axis to show more decimal precision
+#             axins.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.3f'))
+#
+#             # Increase number of y-axis ticks for better precision
+#             axins.yaxis.set_major_locator(ticker.MaxNLocator(nbins=6, prune=None))
+#
+#             # Add border around inset
+#             for spine in axins.spines.values():
+#                 spine.set_edgecolor('black')
+#                 spine.set_linewidth(1.5)
+#
+#     # Add legend with smaller font - positioned lower to avoid overlap with graph
+#     legend = ax.legend(fontsize=21, loc='lower right')
+#     # Manually adjust legend position to be lower
+#     legend.set_bbox_to_anchor((1.0, 0.1))  # Move legend lower from (0.99, 0.15)
+#
+#     # Adjust layout
+#     plt.tight_layout()
+#
+#     # Show plot
+#     plt.show(block=False)
 
 def split_data_properly(data_pd, num_sequences, sequence_length, train_size=0.6, val_size=0.2):
     # Create sequence indices
@@ -2036,12 +3380,26 @@ def split_data_properly(data_pd, num_sequences, sequence_length, train_size=0.6,
 
     return train_sequences, val_sequences, test_sequences, test_indices
 
-
-
 def main(config):
     # Example usage
 
-    plot_trajectory_path(3)
+    # plot_trajectory_path(3)
+    # Plot the 3D trajectories
+    straight_data, turn_data = plot_simulation_trajectories()
+
+    # plot_individual_2d_trajectories(straight_data, turn_data)
+
+    # Optionally plot 2D projections
+    # plot_2d_trajectories(straight_data, turn_data)
+
+    # Plot 2D trajectories separately (X-Y only, no depth)
+    # plot_2d_trajectories_separate(straight_data, turn_data)
+
+    # Plot 3D trajectories separately (side by side)
+    # plot_3d_trajectory_separate(straight_data, turn_data)
+
+    # plot_accelerometer_data()
+    # plot_gyroscope_data()
 
     # Main variables to run the simulation
     roll_gt_deg = config['roll_gt_deg']
@@ -2056,6 +3414,10 @@ def main(config):
         single_dataset_len = config['simulated_dataset_len']
         # single_dataset_duration_sec = config['simulated_dataset_duration_sec']
         sample_freq = 5
+    elif(config['test_type'] == 'convex_data'):
+        single_dataset_len = config['convex_dataset_len']
+        # single_dataset_duration_sec = config['simulated_dataset_duration_sec']
+        sample_freq = 5
     elif((config['test_type'] == 'transformed_real_data') or (config['test_type'] == 'simulated_imu_from_real_gt_data')):
         single_dataset_len = config['real_dataset_len']
         # single_dataset_duration_sec = config['real_dataset_duration_sec']
@@ -2063,7 +3425,12 @@ def main(config):
 
     data_path = config['data_path']
 
-    if(config['test_type'] == 'simulated_data'):
+
+    if(config['test_type'] == 'convex_data'):
+        file_name = config['convex_data_file_name']
+        data_pd = pd.read_csv(os.path.join(data_path, "convex_data_output", f'{file_name}'), header=None)
+
+    elif(config['test_type'] == 'simulated_data'):
         file_name = config['simulated_data_file_name']
         data_pd = pd.read_csv(os.path.join(data_path, "simulated_data_output", f'{file_name}'), header=None)
 
@@ -2074,11 +3441,11 @@ def main(config):
     elif(config['test_type'] == 'transformed_real_data'):
         file_name = config['transformed_real_data_file_name']
         data_pd = pd.read_csv(os.path.join(data_path, "transformed_real_data_output", f'{file_name}'), header=None)
-        simulated_imu_from_real_gt_data_file_name = config['simulated_imu_from_real_gt_data_file_name']
-        simulated_imu_from_real_gt_data_pd = pd.read_csv(os.path.join(data_path, f'{simulated_imu_from_real_gt_data_file_name}'), header=None)
+        # simulated_imu_from_real_gt_data_file_name = config['simulated_imu_from_real_gt_data_file_name']
+        # simulated_imu_from_real_gt_data_pd = pd.read_csv(os.path.join(data_path, f'{simulated_imu_from_real_gt_data_file_name}'), header=None)
     elif (config['test_type'] == 'simulated_imu_from_real_gt_data'):
         file_name = config['simulated_imu_from_real_gt_data_file_name']
-        data_pd = pd.read_csv(os.path.join(data_path, f'{file_name}'), header=None)
+        data_pd = pd.read_csv(os.path.join(data_path, "simulated_imu_from_real_gt_data_output", f'{file_name}'), header=None)
 
 
     real_data_file_name = config['real_data_file_name']
@@ -2108,26 +3475,29 @@ def main(config):
 
     current_time_test_list = []
     rmse_test_list = []
+    mean_error_angles_test_list = []
     v_imu_dvl_test_real_data_list = []
 
     # Calculate number of sequences
     num_of_simulated_datasets = len(data_pd) // single_dataset_len
 
-    train_sequences, val_sequences, test_sequences, test_indices = split_data_properly(
-        data_pd=data_pd,
-        num_sequences=num_of_simulated_datasets,
-        sequence_length=single_dataset_len,
-        train_size=0.6,
-        val_size=0.2
-    )
+    if not config['test_convex']:
 
-    # Replace your existing lists with the new split sequences
-    v_imu_dvl_train_series_list = train_sequences
-    v_imu_dvl_valid_series_list = val_sequences
-    v_imu_dvl_test_series_list = test_sequences
+        train_sequences, val_sequences, test_sequences, test_indices = split_data_properly(
+            data_pd=data_pd,
+            num_sequences=num_of_simulated_datasets,
+            sequence_length=single_dataset_len,
+            train_size=0.6,
+            val_size=0.2
+        )
 
-    v_imu_dvl_test_real_data_list.append(
-        [v_imu_body_real_data_full.T, v_dvl_real_data_full.T, euler_body_dvl_real_data_full.T])
+        # Replace your existing lists with the new split sequences
+        v_imu_dvl_train_series_list = train_sequences
+        v_imu_dvl_valid_series_list = val_sequences
+        v_imu_dvl_test_series_list = test_sequences
+
+        v_imu_dvl_test_real_data_list.append(
+            [v_imu_body_real_data_full.T, v_dvl_real_data_full.T, euler_body_dvl_real_data_full.T])
 
     # train model ##################################################################
     if config['train_model']:
@@ -2194,11 +3564,12 @@ def main(config):
             #model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_{test_type}_window_{window_size}.pth')
             #model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_window_{window_size}.pth')
             # model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_lawn_mower1_22_+2_ba_100_bg_0_01_window_{window_size}.pth')
-            model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_transformed_real_data_traj8_22_+2_window_{window_size}.pth')
+            model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_simulated_data_long_turn_17_+0_3125_ba_100_bg_1_window_{window_size}.pth')
+            # model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_transformed_real_data_traj7_17_+0_3125_window_{window_size}.pth')
+            # model_path = os.path.join(trained_model_base_path, f'imu_dvl_model_transformed_real_data_traj11_16_+0_3333_window_{window_size}.pth')
             # Load model
             # model = SimplerIMUResNet(dropout_rate=0.3)
             model = Resnet1chDnet()
-
             print(f"model.load_state_dict")
             model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
             model.to(device)
@@ -2225,22 +3596,23 @@ def main(config):
 
             print(f"eval")
             # Evaluate model
-            rmse = evaluate_model(
+            rmse, mean_angles_error = evaluate_model(
                 model, test_loader, device
             )
 
             rmse_test_list.append(rmse)
+            mean_error_angles_test_list.append(mean_angles_error)
             current_time = window_size
             current_time_test_list.append(current_time)
             print(f"Test RMSE: {rmse:.4f}")
 
 
-# Test Baseline Model section #################
+    # Test Baseline Model section #################
     if config['test_baseline_model']:
 
-        mean_rmse_svd_degrees_per_num_samples_list, svd_time_list = calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sample_freq, config)
+        mean_rmse_svd_degrees_per_num_samples_list, mean_error_angles_svd_degrees_per_num_samples_list, svd_time_list = calc_mean_rmse_svd_degrees_per_num_samples(v_imu_dvl_test_series_list, sample_freq, config)
 
-        # # movmean_window_size = 15  # Best for transformed real traj 8
+        # # movmean_window_size = 15 # Best for transformed real traj 8
         # movmean_window_size = 1  #
         # mean_rmse_svd_degrees_per_num_samples_list_smoothed = movmean(mean_rmse_svd_degrees_per_num_samples_list,
         #                                                               movmean_window_size)
@@ -2248,14 +3620,16 @@ def main(config):
         # mean_rmse_svd_degrees_per_num_samples_list = mean_rmse_svd_degrees_per_num_samples_list_smoothed
 
         # save_baseline_results_numpy(mean_rmse_svd_degrees_per_num_samples_list, svd_time_list,rmse_test_list, current_time_test_list, config)
+
+        # plot_results_graph_angle_me_net_and_angle_me_svd(svd_time_list, mean_error_angles_svd_degrees_per_num_samples_list, current_time_test_list, mean_error_angles_test_list)
         plot_results_graph_rmse_net_and_rmse_svd(svd_time_list, mean_rmse_svd_degrees_per_num_samples_list, current_time_test_list, rmse_test_list)
 
         # loaded_rmse_baseline_results_list, loaded_timeline_baseline_results_list = load_baseline_results_numpy(config)
         # print("Baseline RMSE")
         # # Create labels for the baselines (optional)
         # baseline_labels = [
-        #     # f"SVD", f"AligNet - sim2real", f"AligNet"
-        #     f"SVD", f"AligNet"
+        #     f"SVD (baseline)", f"ResAlignNet - sim2real (ours)", f"ResAlignNet (ours)"
+        #     # f"SVD (baseline) - Navigation Grade IMU", f"ResAlignNet (ours) - Navigation Grade IMU", f"SVD (baseline) - Tactical Grade IMU", f"ResAlignNet (ours) - Tactical Grade IMU"
         # ]
         #
         # # Plot all baselines on the same plot
@@ -2267,6 +3641,200 @@ def main(config):
         #     rmse_test_list=rmse_test_list if config['test_model'] else None
         # )
 
+    if config['test_convex']:
+
+        num_of_simulated_datasets = len(data_pd) // single_dataset_len
+
+        # Extract data arrays
+        v_imu_body_full = np.array(data_pd.iloc[:, 1:4].T).T
+        v_dvl_full = np.array(data_pd.iloc[:, 4:7].T).T
+        euler_body_dvl_gt_full = np.array(data_pd.iloc[:, 7:10])
+        # est_eul_ned_to_body_rad_full = np.array(data_pd.iloc[:, 10:13].T)
+        # est_acc_eb_b_full = np.array(data_pd.iloc[:, 13:16].T)
+        b_acc_full = np.array(data_pd.iloc[:, 10].T)
+        b_gyro_full = np.array(data_pd.iloc[:, 11].T)
+
+        # Create all sequences sequentially (no shuffling)
+        all_sequences = []
+        step_size = sample_freq * 1
+        for idx in range(num_of_simulated_datasets):
+            # print(f"num_of_simulated_datasets: {idx}/{num_of_simulated_datasets}")
+            min_rse_value = 10000.0
+            start_idx = idx * single_dataset_len
+            end_idx = start_idx + single_dataset_len - single_dataset_len % 10
+            b_acc_sampled = b_acc_full[start_idx]
+            b_gyro_sampled = b_gyro_full[start_idx]
+
+            for num_samples in range(start_idx + 60*step_size, end_idx, step_size):
+                # print(f"num_samples: {num_samples}/{end_idx}")
+                v_imu_sampled = v_imu_body_full[start_idx:num_samples, :]
+                v_dvl_sampled = v_dvl_full[start_idx:num_samples, :]
+                euler_body_dvl_gt = euler_body_dvl_gt_full[start_idx, :]
+
+                euler_angles_svd_rads = run_svd_solution_for_wahba_problem(v_imu_sampled.T, v_dvl_sampled.T)
+                euler_angles_svd_degrees = np.degrees(euler_angles_svd_rads)
+                # print(f"euler_angles_svd_rads: {euler_angles_svd_degrees}")
+                svd_squared_err_angles = calc_squared_err_angles(np.array(euler_angles_svd_degrees), euler_body_dvl_gt)
+                # svd_sum_squared_err_angles = np.sum(svd_squared_err_angles)
+                svd_root_squared_err_angles = np.sqrt(np.sum(svd_squared_err_angles))
+                # print(f"svd_root_squared_err_angles: {svd_root_squared_err_angles}")
+                if svd_root_squared_err_angles < min_rse_value:
+                    min_rse_value = svd_root_squared_err_angles
+
+            all_sequences.append([
+                b_acc_sampled / 1000,  # Convert to mg
+                b_gyro_sampled,
+                min_rse_value
+            ])
+
+        # Extract data for plotting
+        acc_bias_values = np.array([seq[0] for seq in all_sequences])
+        gyro_bias_values = np.array([seq[1] for seq in all_sequences])
+        svd_mse_values = np.array([seq[2] for seq in all_sequences])
+
+        print(f"Number of data points: {len(all_sequences)}")
+        print(f"Unique accelerometer bias values: {len(np.unique(acc_bias_values))}")
+        print(f"Unique gyroscope bias values: {len(np.unique(gyro_bias_values))}")
+
+        # Create 2D heatmap plot (as suggested by supervisor)
+        fig = plt.figure(figsize=(12, 8))
+        ax = fig.add_subplot(111)
+
+        # Initialize variables for specific points
+        specific_z_values = [0, 0]  # Default values
+
+        # Check if we have enough points for interpolation
+        if len(all_sequences) >= 4 and len(np.unique(acc_bias_values)) >= 2 and len(
+                np.unique(gyro_bias_values)) >= 2:
+            try:
+                # Create a regular grid for interpolation
+                acc_min, acc_max = acc_bias_values.min(), acc_bias_values.max()
+                gyro_min, gyro_max = gyro_bias_values.min(), gyro_bias_values.max()
+
+                # Create meshgrid for heatmap plotting
+                acc_grid = np.linspace(acc_min, acc_max, 50)
+                gyro_grid = np.linspace(gyro_min, gyro_max, 50)
+                ACC_GRID, GYRO_GRID = np.meshgrid(acc_grid, gyro_grid)
+
+                # Interpolate MSE values on the grid using scipy's griddata
+                from scipy.interpolate import griddata
+
+                # Stack the original points
+                points = np.column_stack((acc_bias_values, gyro_bias_values))
+                grid_points = np.column_stack((ACC_GRID.ravel(), GYRO_GRID.ravel()))
+
+                # Try cubic interpolation first, fall back to linear if it fails
+                try:
+                    MSE_GRID = griddata(points, svd_mse_values, grid_points, method='cubic', fill_value=np.nan)
+                except:
+                    MSE_GRID = griddata(points, svd_mse_values, grid_points, method='linear', fill_value=np.nan)
+
+                MSE_GRID = MSE_GRID.reshape(ACC_GRID.shape)
+
+                # Create 2D heatmap with contourf
+                heatmap = ax.contourf(ACC_GRID, GYRO_GRID, MSE_GRID, levels=20, cmap='viridis', alpha=0.9)
+
+                # Add contour lines for better visualization
+                contour_lines = ax.contour(ACC_GRID, GYRO_GRID, MSE_GRID, levels=10, colors='white', alpha=0.6,
+                                           linewidths=0.8)
+                ax.clabel(contour_lines, inline=True, fontsize=32, fmt='%.1f')
+
+                # Add colorbar
+                cbar = plt.colorbar(heatmap, ax=ax)
+                cbar.set_label('Alignment RMSE [deg] - SVD (baseline)', fontsize=32)
+                cbar.ax.tick_params(labelsize=30)
+
+                plot_type = "2D Heatmap"
+
+                # Interpolate Z values for the specific points we want to highlight
+                specific_points = np.array([[1.0, 10.0], [0.1, 1.0]])  # [acc_bias, gyro_bias]
+
+                try:
+                    specific_z_values = griddata(points, svd_mse_values, specific_points, method='cubic')
+                    # If cubic fails or returns NaN, try linear
+                    if np.any(np.isnan(specific_z_values)):
+                        specific_z_values = griddata(points, svd_mse_values, specific_points, method='linear')
+                    # If still NaN, use nearest neighbor
+                    if np.any(np.isnan(specific_z_values)):
+                        specific_z_values = griddata(points, svd_mse_values, specific_points, method='nearest')
+                except:
+                    specific_z_values = griddata(points, svd_mse_values, specific_points, method='nearest')
+
+            except Exception as e:
+                print(f"Heatmap interpolation failed: {e}")
+                print("Falling back to scatter plot...")
+                # Fall back to scatter plot
+                scatter = ax.scatter(acc_bias_values, gyro_bias_values, c=svd_mse_values,
+                                     cmap='viridis', s=100, alpha=0.8)
+
+                # Add colorbar
+                cbar = plt.colorbar(scatter, ax=ax)
+                cbar.set_label('Alignment MSE [deg] - SVD (baseline)', fontsize=32)
+                cbar.ax.tick_params(labelsize=30)
+
+                plot_type = "2D Scatter Plot (insufficient data for heatmap)"
+
+                # For scatter plot, find nearest points or use average Z
+                specific_z_values = [np.mean(svd_mse_values), np.mean(svd_mse_values)]
+
+        else:
+            print("Not enough data points for heatmap interpolation. Using scatter plot...")
+            # Use scatter plot for insufficient data
+            scatter = ax.scatter(acc_bias_values, gyro_bias_values, c=svd_mse_values,
+                                 cmap='viridis', s=100, alpha=0.8)
+
+            # Add colorbar
+            cbar = plt.colorbar(scatter, ax=ax)
+            cbar.set_label('Alignment MSE [deg] - SVD (baseline)', fontsize=32)
+            cbar.ax.tick_params(labelsize=30)
+
+            plot_type = "2D Scatter Plot (insufficient data for heatmap)"
+
+            # For scatter plot, use average Z values for the specific points
+            specific_z_values = [np.mean(svd_mse_values), np.mean(svd_mse_values)]
+
+        # Add the two specific highlighted points
+        # Point 1: acc_bias = 1 mg, gyro_bias = 10
+        ax.scatter([1.0], [10.0], c='green', s=250, alpha=1.0, edgecolors='black', linewidth=3,
+                   label='acc=1mg, gyro=10°/h', marker='o', zorder=5)
+
+        # Point 2: acc_bias = 0.1 mg, gyro_bias = 1
+        ax.scatter([0.1], [1.0], c='blue', s=250, alpha=1.0, edgecolors='black', linewidth=3,
+                   label='acc=0.1mg, gyro=1°/h', marker='s', zorder=5)
+
+        # Set labels with larger font sizes
+        ax.set_xlabel('Accelerometer Bias [mg]', fontsize=34)
+        ax.set_ylabel('Gyroscope Bias [deg/hour]', fontsize=34)
+
+        # Set title
+        # ax.set_title(f'Convex Optimization Results: {plot_type}', fontsize=28, pad=20)
+
+        # Improve tick label sizes
+        ax.tick_params(axis='x', labelsize=32)
+        ax.tick_params(axis='y', labelsize=32)
+
+        # Add grid for better readability
+        ax.grid(True, alpha=0.3)
+
+        # Add legend with all markers
+        ax.legend(loc='lower right', fontsize=26)
+
+        # Adjust layout
+        plt.tight_layout()
+
+        # Show plot
+        plt.show()
+
+        # Print some statistics including the specific points
+        print(f"\nConvex Optimization Results Summary:")
+        print(f"Number of sequences: {len(all_sequences)}")
+        print(f"Accelerometer bias range: {min(acc_bias_values):.4f} to {max(acc_bias_values):.4f} mg")
+        print(f"Gyroscope bias range: {min(gyro_bias_values):.4f} to {max(gyro_bias_values):.4f} deg/hour")
+        print(f"SVD MSE range: {min(svd_mse_values):.4f} to {max(svd_mse_values):.4f} deg")
+        print(f"Best (minimum) SVD MSE: {min(svd_mse_values):.4f} deg")
+        print(f"\nHighlighted Points:")
+        print(f"Green point (acc=1mg, gyro=10°/h): MSE = {specific_z_values[0]:.4f} deg")
+        print(f"Blue point (acc=0.1mg, gyro=1°/h): MSE = {specific_z_values[1]:.4f} deg")
 
 if __name__ == '__main__':
     # Default configuration
@@ -2283,37 +3851,57 @@ if __name__ == '__main__':
         'yaw_gt_deg': -44.3,
         # 'window_sizes_sec': [5, 25, 50, 75, 100, 125, 150],
         # 'window_sizes_sec': [75],
-        #'window_sizes_sec': [5,25,50,75,100,125,150,175,200],
         'window_sizes_sec': [5],
         # 'window_sizes_sec': [5,25,50,75,100],
         # 'window_sizes_sec': [175],
         'batch_size': 32,
-        'simulated_dataset_len': 1554, # - straight descent1 - important!! you have to update it, from the data output file, every time you change dataset
+        # 'simulated_dataset_len': 1554, # - straight descent1 - important!! you have to update it, from the data output file, every time you change dataset
+        # 'simulated_dataset_len': 1077, # - straight line - important!! you have to update it, from the data output file, every time you change dataset
+        # 'simulated_dataset_len': 1075, # - straight line1 - important!! you have to update it, from the data output file, every time you change dataset
+        # 'simulated_dataset_len': 5791, # - straight line1 - important!! you have to update it, from the data output file, every time you change dataset
+        # 'simulated_dataset_len': 1503, # - straight line1 - important!! you have to update it, from the data output file, every time you change dataset
+        'simulated_dataset_len': 1027, # - long turn - important!! you have to update it, from the data output file, every time you change dataset
+        # 'simulated_dataset_len': 1585, # - straight_dive_n_turn - important!! you have to update it, from the data output file, every time you change dataset
+        # 'simulated_dataset_len': 1509, # - straight_turn_left_180 - important!! you have to update it, from the data output file, every time you change dataset
         # 'simulated_dataset_len': 3234, # - lawn_mower_1 - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
         # 'simulated_dataset_len': 2907, # - lawn_mower_4 - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
         # 'simulated_dataset_len': 3703, # - lawn_mower_5 - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
         # 'simulated_dataset_len': 1638, # - squared - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
-        'real_dataset_len': 400,
+        # 'real_dataset_len': 400, ## important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
+        'real_dataset_len': 200, # - traj7, traj11 - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
+        # 'real_dataset_len': 185, # - traj10_a - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
+        # 'real_dataset_len': 249, # - traj10_b - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
+        #'real_dataset_len': 199, # - traj10_c - important!! you have to update it, from the data output file, every time you change dataset - should be length of single trajectory
+        'convex_dataset_len': 2054, # - turn pattern simulated for convex -  important!! you have to update it, from the data output file, and every time you change dataset
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
-        'test_type': 'transformed_real_data',  # Set to "real_data" or "simulated_data" or "transformed_real_data" or "simulated_imu_from_real_gt_data"
+        'test_type': 'convex_data',  # Set to "convex_data" or "simulated_data" or "transformed_real_data" or "simulated_imu_from_real_gt_data" or "real_data"
         'train_model': False,
-        'test_model': True,
-        'test_baseline_model': True,
+        'test_model': False,
+        'test_baseline_model': False,
+        'test_convex': False,
         'trained_model_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work\\trained_model",
         #'simulated_data_file_name': 'simulated_data_output.csv',
-        # 'simulated_data_file_name': 'simulated_data_output_lawn_mower1_22_+2_ba_100_bg_0_01.csv',
-        'simulated_data_file_name': 'simulated_data_output.csv',
+        'simulated_data_file_name': 'simulated_data_output_long_turn_17_+0_3125_ba_real_bg_10.csv',
+        # 'simulated_data_file_name': 'simulated_data_output_long_turn_17_+2_8125_ba_real_bg_10.csv',
+        # imu_dvl_model_simulated_data_straight_line_17_ + 2_8125_ba_real_bg_10_window_75
+        # 'simulated_data_file_name': 'simulated_data_output.csv',
+        'convex_data_file_name': 'convex_data_output.csv',
         'real_data_file_name': 'real_data_output.csv',
         # 'transformed_real_data_file_name': 'transformed_real_data_output.csv',
-        # 'transformed_real_data_file_name': 'transformed_real_data_output_traj8_22_+2.csv',
-        'transformed_real_data_file_name': 'transformed_real_data_output.csv',
+        # 'transformed_real_data_file_name': 'transformed_real_data_output_traj7_17_+0_3125.csv',
+        # 'transformed_real_data_file_name': 'transformed_real_data_output_traj11_16_+0_3333.csv',
+        'transformed_real_data_file_name': 'transformed_real_data_output_traj11_16_+0_3333_roll_4.csv',
+        # 'transformed_real_data_file_name': 'transformed_real_data_output_traj11_26_+1.csv',
         'simulated_imu_from_real_gt_data_file_name': 'simulated_imu_from_real_gt_data_output.csv',
-        # 'saved_rmse_results_file_name': 'simulated_data_output_lawn_mower1_22_+2_ba_100_bg_0_01',
-        'saved_rmse_results_file_name': 'transformed_real_data_traj8_22_+2',
-        # 'saved_rmse_results_file_name': 'sim2real_transformed_real_data_traj12_22_+2',
+        # 'saved_rmse_results_file_name': 'simulated_data_long_turn_17_+0_3125_ba_real_bg_10',
+        # 'saved_rmse_results_file_name': 'sim2real_transformed_real_data_traj7_17_+0_3125',
+        # 'saved_rmse_results_file_name': 'transformed_real_data_traj7_17_+2_8125',
+        'saved_rmse_results_file_name': 'sim2real_transformed_real_data_traj7_11_+2_8125',
         # 'loaded_rmse_results_file_names_list': ['baseline_transformed_real_data_traj12_22_+0_227','sim2real_transformed_real_data_traj12_22_+0_227', 'transformed_real_data_traj12_22_+0_227'],
-        'loaded_rmse_results_file_names_list': ['baseline_simulated_data_lawn_mower1_22_+2_ba_100_bg_0_01','simulated_data_lawn_mower1_22_+2_ba_100_bg_0_01'],
-        # rmse_baseline_simulated_data_output_lawn_mower1_22_ + 0_227_ba_100_bg_0_01
+        # 'loaded_rmse_results_file_names_list': ['baseline_transformed_real_data_traj7_17_+0_3125', 'sim2real_transformed_real_data_traj7_17_+0_3125', 'transformed_real_data_traj7_17_+0_3125'],
+        'loaded_rmse_results_file_names_list': ['baseline_transformed_real_data_traj11_16_+0_3333', 'sim2real_transformed_real_data_traj11_16_+0_3333', 'transformed_real_data_traj11_16_+0_3333'],
+        # 'loaded_rmse_results_file_names_list': ['baseline_simulated_data_long_turn_17_+0_3125_ba_100_bg_1','simulated_data_long_turn_17_+0_3125_ba_100_bg_1', 'baseline_simulated_data_long_turn_17_+0_3125_ba_real_bg_10','simulated_data_long_turn_17_+0_3125_ba_real_bg_10'],
+        # 'loaded_rmse_results_file_names_list': ['baseline_simulated_data_long_turn_17_+0_3125_ba_100_bg_1','simulated_data_long_turn_17_+0_3125_ba_100_bg_1', 'baseline_simulated_data_long_turn_17_+0_3125_ba_real_bg_10','simulated_data_long_turn_17_+0_3125_ba_real_bg_10'],
         'real_imu_file_name': 'IMU_trajectory.csv',
         'real_dvl_file_name': 'DVL_trajectory.csv',
         'real_gt_file_name': 'GT_trajectory.csv'
