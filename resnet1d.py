@@ -18,6 +18,34 @@ __all__ = [
     "wide_resnet101_2_1d",
 ]
 
+class Resnet1chDnet(nn.Module):
+    def __init__(self, in_channels=6, output_features=3):
+        self.in_channels = in_channels
+        super(Resnet1chDnet, self).__init__()
+
+        self.model = resnet18_1d()
+
+        # "ResNet",
+        # "resnet18_1d",
+        # "resnet34_1d",
+        # "resnet50_1d",
+        # "resnet101_1d",
+        # "resnet152_1d",
+        # "resnext50_32x4d_1d",
+        # "resnext101_32x8d_1d",
+        # "wide_resnet50_2_1d",
+        # "wide_resnet101_2_1d",
+
+        # Changed Conv2d to Conv1d since we're working with 1D data
+        self.model.conv1 = nn.Conv1d(self.in_channels, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        # Update the final fully connected layer to match the expected dimensions
+        num_features = self.model.fc.in_features  # Get the number of input features
+        self.model.fc = nn.Linear(num_features, output_features)
+
+    def forward(self, x):
+        # Permute the dimensions from [batch_size, sequence_length, channels] to [batch_size, channels, sequence_length]
+        x = x.permute(0, 2, 1)
+        return self.model(x)
 
 # model_urls = {
 #     "resnet18": "https://download.pytorch.org/models/resnet18-f37072fd.pth",
