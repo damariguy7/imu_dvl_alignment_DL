@@ -1,6 +1,6 @@
 import numpy as np
 
-from main import calc_squared_err_angles, calc_err_angles
+from calc_error_functions import calc_squared_err_angles, calc_err_angles
 from run_svd_solution_for_wahba_problem import run_svd_solution_for_wahba_problem
 
 

@@ -1,3 +1,5 @@
+import numpy as np
+from sklearn.model_selection import train_test_split
 
 
 def split_data_properly(data_pd, num_sequences, sequence_length, train_size=0.6, val_size=0.2):

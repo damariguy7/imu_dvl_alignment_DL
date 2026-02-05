@@ -736,7 +736,7 @@ if __name__ == '__main__':
         'data_path': "C:\\Users\\damar\\MATLAB\\Projects\\modeling-and-simulation-of-an-AUV-in-Simulink-master\\Work",
         'test_type': 'transformed_real_data',  # Set to "convex_data" or "simulated_data" or "transformed_real_data" or "simulated_imu_from_real_gt_data" or "real_data"
         'model': 'ResAligNet', # "AligNet", "ResAligNet", "MLP", "BeamsNet"
-        'train_model': False,
+        'train_model': True,
         'test_model': True,
         'test_baseline_model': True,
         'test_convex': False,
